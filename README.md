@@ -35,11 +35,11 @@ WIZWING drone — the framework handles the translation transparently.
 
 ## Supported Drone Platforms
 
-| Platform     | Library              | Communication    | Registry Key      |
-|--------------|----------------------|------------------|-------------------|
-| CoDrone EDU  | CoDrone (Robolink)   | Bluetooth        | `codrone_edu`     |
-| CodingRider  | CodingRider.drone    | Bluetooth/Wi-Fi  | `coding_rider`    |
-| WIZWING      | pyserial             | Serial (USB)     | `wizwing`         |
+| Platform     | Library              | Communication                    | Registry Key      |
+|--------------|----------------------|----------------------------------|-------------------|
+| CoDrone EDU  | CoDrone (Robolink)   | Radio Frequency                  | `codrone_edu`     |
+| CodingRider  | CodingRider.drone    | Radio Frequency                  | `coding_rider`    |
+| WIZWING      | pyserial             | Radio Frequency and Wi-Fi        | `wizwing`         |
 
 ## Architecture
 
