@@ -1,0 +1,8 @@
+metric,version_a_framework,version_b_native,reduction
+lines_of_code,31,140,78%
+import_statements,6,9,33%
+distinct_api_calls,12,19,37%
+drone_object_variables,1,6,83%
+if_blocks,0,26,100%
+try_except_blocks,0,6,100%
+reusable_code_pct,96.8,27.9,+68.9pp
