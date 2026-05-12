@@ -37,7 +37,11 @@ from unittest.mock import MagicMock
 #    so that the lazy imports inside connect() find the mocks.
 # ---------------------------------------------------------------------
 
-for fake_module in ("CoDrone", "CodingRider", "CodingRider.drone", "serial"):
+for fake_module in (
+    "codrone_edu", "codrone_edu.drone",
+    "CodingRider", "CodingRider.drone", "CodingRider.protocol",
+    "serial",
+):
     sys.modules[fake_module] = MagicMock()
 
 

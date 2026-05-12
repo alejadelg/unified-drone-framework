@@ -54,8 +54,8 @@ def register_drone(key: str):
 
     Usage::
 
-        @register_drone("tello")
-        class TelloAdapter(DroneAdapter):
+        @register_drone("my_drone")
+        class MyDroneAdapter(DroneAdapter):
             ...
     """
 

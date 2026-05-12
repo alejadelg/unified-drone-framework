@@ -239,39 +239,53 @@ The framework is designed so adding a new platform requires **one new file
 and zero modifications to existing code** (this is empirically verified by
 `eval_extensibility.py` — see [Evaluation Results](#1-extensibility-zero-modification-proof)).
 
+A complete reference implementation is included as
+`unified_drone/adapters/simdrone_adapter.py` (200 LOC). It simulates a
+hypothetical Wi-Fi educational drone ("SimDrone") with realistic quirks:
+UDP socket connection, speed in m/s instead of percentage, distance in
+millimetres instead of metres, and an LED that requires splitting one
+unified `set_led()` call into three single-channel protocol commands.
+
+The minimal skeleton looks like:
+
 ```python
-# unified_drone/adapters/tello.py
+# unified_drone/adapters/my_new_drone.py
 from unified_drone import DroneAdapter, register_drone
 from unified_drone.core.enums import Direction, DroneStatus
 
-@register_drone("tello")
-class TelloAdapter(DroneAdapter):
+@register_drone("my_new_drone")
+class MyNewDroneAdapter(DroneAdapter):
 
-    def __init__(self, name: str = "tello") -> None:
+    def __init__(self, name: str = "my_new_drone") -> None:
         super().__init__(name=name)
-        self._tello = None
+        self._vendor_sdk = None
 
     def connect(self, **kwargs) -> None:
-        from djitellopy import Tello
-        self._tello = Tello()
-        self._tello.connect()
+        from my_vendor_sdk import VendorDrone
+        self._vendor_sdk = VendorDrone()
+        self._vendor_sdk.open(**kwargs)
         self._status = DroneStatus.CONNECTED
 
     def takeoff(self) -> None:
-        self._tello.takeoff()
+        self._vendor_sdk.start_flight()
         self._status = DroneStatus.FLYING
 
-    # ... implement remaining abstract methods (11 in total)
+    # ... implement the remaining 9 abstract methods
 ```
 
 After importing the new module, the registry recognizes the new platform:
 
 ```python
-import unified_drone.adapters.tello
+import unified_drone.adapters.my_new_drone
 
 manager = DroneManager()
-manager.add_drone("my_tello", "tello")  # works immediately
+manager.add_drone("my_drone", "my_new_drone")   # works immediately
 ```
+
+See `simdrone_adapter.py` for a fully worked example covering all 11
+abstract methods, including a compensatory mechanism (the split-channel
+LED workaround). The same adapter is exercised end-to-end by
+`eval_extensibility.py` to empirically prove the zero-modification property.
 
 ## Project Structure
 
@@ -292,8 +306,7 @@ unified-drone-framework/
 │   │   ├── coding_rider.py           # CodingRider adapter
 │   │   └── wizwing.py                # WIZWING serial adapter
 │   └── examples/
-│       ├── basic_usage.py            # Multi-platform unified control demo
-│       └── add_new_drone.py          # Extensibility demo (DJI Tello)
+│       └── basic_usage.py            # Multi-platform unified control demo
 │
 ├── unified_drone_manual.docx         # Complete user manual (14 chapters)
 │
@@ -509,16 +522,22 @@ covering:
 
 ## Examples
 
-The `unified_drone/examples/` directory includes runnable demos:
+The `unified_drone/examples/` directory includes a runnable demo:
 
 - **`basic_usage.py`** — Multi-platform unified control across all 3 drones
-- **`add_new_drone.py`** — Adding a 4th drone (DJI Tello) without modifying existing code
 
-Run them with:
+Run it with:
 
 ```bash
 python -m unified_drone.examples.basic_usage
-python -m unified_drone.examples.add_new_drone
+```
+
+The extensibility property (adding a new drone with zero modifications) is
+demonstrated end-to-end by `eval_extensibility.py` using the SimDrone
+reference implementation (`unified_drone/adapters/simdrone_adapter.py`):
+
+```bash
+python eval_extensibility.py
 ```
 
 ## Design Principles
