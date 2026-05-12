@@ -16,6 +16,7 @@ class FlightAction(Enum):
     HOVER = auto()
     SET_LED = auto()
     GET_BATTERY = auto()
+    GET_HEIGHT = auto()
     GET_STATUS = auto()
 
 

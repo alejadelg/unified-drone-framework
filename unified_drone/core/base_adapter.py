@@ -72,6 +72,10 @@ class DroneAdapter(ABC):
     def get_battery(self) -> int:
         """Return battery level as a percentage (0-100), or -1 if unavailable."""
 
+    @abstractmethod
+    def get_height(self) -> float:
+        """Return current altitude in meters, or -1.0 if unavailable."""
+
     # --- Concrete command dispatch ---
 
     def execute(self, command: DroneCommand) -> Any:
@@ -91,6 +95,7 @@ class DroneAdapter(ABC):
             FlightAction.HOVER: lambda: self.hover(**command.params),
             FlightAction.SET_LED: lambda: self.set_led(**command.params),
             FlightAction.GET_BATTERY: lambda: self.get_battery(),
+            FlightAction.GET_HEIGHT: lambda: self.get_height(),
             FlightAction.GET_STATUS: lambda: self.status,
         }
         handler = dispatch.get(command.action)

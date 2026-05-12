@@ -92,5 +92,9 @@ class DroneCommand:
         return cls(action=FlightAction.GET_BATTERY)
 
     @classmethod
+    def get_height(cls) -> DroneCommand:
+        return cls(action=FlightAction.GET_HEIGHT)
+
+    @classmethod
     def get_status(cls) -> DroneCommand:
         return cls(action=FlightAction.GET_STATUS)
