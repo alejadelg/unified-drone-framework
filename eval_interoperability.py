@@ -305,12 +305,30 @@ class MockCodingRider(_MockBase):
         return self._z
 
 
-# ---- 3. WIZWING mock (NATIVE via binary protocol) ----
+# ---- 3. WIZWING mock (text-based ASCII protocol; 2 COMPENSATORY) ----
 
 
 @register_drone("mock_wizwing")
 class MockWizwing(_MockBase):
-    """Realistic mock of the WIZWING drone (USB serial, binary protocol)."""
+    """Realistic mock of the WIZWING drone (text-based ASCII serial @ 9600).
+
+    COMPENSATORY mechanisms exposed by this mock:
+      * hover()   -> no native hover command in the WIZWING protocol;
+                     emulated with time.sleep (the drone hovers naturally
+                     while no motion command is active).
+      * set_led() -> WIZWING only has 'funled' (a preset 4-colour cycle);
+                     arbitrary RGB cannot be specified. The adapter sends
+                     'funled' and warns that the requested colour is ignored.
+
+    Everything else is NATIVE with parameter translation:
+      * takeoff/land           -> 'takeoff' / 'land'
+      * emergency_stop         -> 'emergency'
+      * move(direction,dist,sp)-> '<verb> <strength> <duration_ms>'
+      * turn(degrees)          -> 'cw|ccw <strength> <duration_ms>'
+      * get_battery/get_height -> 'battery?' / 'height?' + readline
+    """
+
+    logger = logging.getLogger("MockWizwing")
 
     def __init__(self, name: str = "mock_wizwing") -> None:
         super().__init__(name=name)
@@ -369,16 +387,28 @@ class MockWizwing(_MockBase):
         self._drain(1)
 
     def hover(self, duration: float = 1.0) -> None:
-        # Native: WIZWING has a hover packet
+        # COMPENSATORY: no native hover command; emulate with time.sleep.
+        # The WIZWING flight controller stabilises altitude automatically
+        # when no motion command is active.
         self._ensure_connected()
-        self._tx()
+        self.logger.warning(
+            "WIZWING hover emulated via time.sleep (no native hover command)"
+        )
         sim_sleep(duration)
         self._drain(int(duration))
 
     def set_led(self, color: LEDColor) -> None:
+        # COMPENSATORY: only 'funled' (preset 4-colour cycle) available;
+        # cannot pick an arbitrary RGB triplet.
         self._ensure_connected()
         self._tx()
+        self.logger.warning(
+            "WIZWING set_led: only 'funled' preset cycle available; "
+            "RGB=(%d,%d,%d) ignored",
+            color.red, color.green, color.blue,
+        )
         sim_sleep(0.06)
+        # We track the LED state even though the real device cycles colours
         self._led = (color.red, color.green, color.blue)
 
     def get_battery(self) -> int:
@@ -423,15 +453,20 @@ IMPLEMENTATION_TYPE: Dict[Tuple[str, str], str] = {
     )},
     ("mock_coding_rider", "get_battery"): "COMPENSATORY",
     ("mock_coding_rider", "get_height"): "COMPENSATORY",
-    # WIZWING is fully native (binary protocol covers everything)
+    # WIZWING has 2 compensatory mechanisms (hover and set_led).
+    # The text protocol has no hover command and only 'funled' for LEDs.
     **{("wizwing", c): "NATIVE" for c in (
-        "connect", "takeoff", "land", "hover", "move", "turn",
-        "get_battery", "get_height", "set_led", "disconnect", "emergency_stop",
+        "connect", "takeoff", "land", "move", "turn",
+        "get_battery", "get_height", "disconnect", "emergency_stop",
     )},
+    ("wizwing", "hover"): "COMPENSATORY",
+    ("wizwing", "set_led"): "COMPENSATORY",
     **{("mock_wizwing", c): "NATIVE" for c in (
-        "connect", "takeoff", "land", "hover", "move", "turn",
-        "get_battery", "get_height", "set_led", "disconnect", "emergency_stop",
+        "connect", "takeoff", "land", "move", "turn",
+        "get_battery", "get_height", "disconnect", "emergency_stop",
     )},
+    ("mock_wizwing", "hover"): "COMPENSATORY",
+    ("mock_wizwing", "set_led"): "COMPENSATORY",
 }
 
 

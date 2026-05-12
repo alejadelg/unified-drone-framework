@@ -1,26 +1,45 @@
-"""Adapter for the WIZWING drone controlled via pyserial.
+"""Adapter for the WIZWING drone (text-based ASCII serial protocol).
 
-Sends raw byte command packets over a serial port. The protocol uses a simple
-packet format: [HEADER][CMD][LEN][PAYLOAD...][CHECKSUM][FOOTER].
-
-The pyserial library is imported lazily inside connect().
+Verified against the official WIZWING / R4-A controller documentation. The
+WIZWING is controlled by a simple text shell over a serial port at 9600 baud.
+Every command is an ASCII string terminated by carriage return (``\\r``), and
+telemetry queries return ASCII lines that the host reads with
+``ser.readline()``.
 
 API translation reference:
-    connect()      -> serial.Serial(port, baudrate)
-    disconnect()   -> serial.close()
-    takeoff()      -> packet(CMD=0x01)
-    land()         -> packet(CMD=0x02)
-    emergency_stop -> packet(CMD=0x03)
-    move()         -> packet(CMD=0x04, payload=[dir, dist_cm, speed])
-    turn()         -> packet(CMD=0x05, payload=[sign, degrees])
-    hover()        -> packet(CMD=0x06, payload=[duration_ms])
-    set_led()      -> packet(CMD=0x07, payload=[r, g, b, brightness])
-    get_battery()  -> packet(CMD=0x08) + read response
-    get_height()   -> packet(CMD=0x09) + read response (uint16 BE cm)
+
+    connect()       -> serial.Serial(port=..., baudrate=9600,
+                                     parity='N', stopbits=1,
+                                     bytesize=8, timeout=8)
+                       drone.write(b'connect\\r')
+    disconnect()    -> drone.write(b'off\\r') then serial.close()
+    takeoff()       -> 'takeoff\\r'
+    land()          -> 'land\\r'
+    emergency_stop  -> 'emergency\\r'
+    move()          -> '<verb> <strength> <duration_ms>\\r'
+                       where verb is one of {forward, back, left, right,
+                       up, down} and strength is 20-500.
+    turn()          -> 'cw <strength> <ms>\\r' or 'ccw <strength> <ms>\\r'
+                       (framework convention: +degrees = clockwise)
+    set_led()       -> COMPENSATORY: WIZWING only exposes ``funled`` (a
+                       toggle that cycles preset colours). Arbitrary RGB
+                       cannot be specified. The adapter sends 'funled\\r'
+                       and warns that the requested colour was ignored.
+    hover()         -> COMPENSATORY: WIZWING has no native hover command.
+                       The drone naturally stabilises when no movement
+                       command is sent, so the adapter blocks via
+                       ``time.sleep(duration)`` to emulate hover.
+    get_battery()   -> 'battery?\\r' then read response line; parses the
+                       first integer found.
+    get_height()    -> 'height?\\r' then read response line; parses the
+                       first float found.
 """
 
+from __future__ import annotations
+
 import logging
-import struct
+import re
+import time
 from typing import Any, Optional
 
 from ..core.base_adapter import DroneAdapter
@@ -32,63 +51,38 @@ from ..core.registry import register_drone
 logger = logging.getLogger(__name__)
 
 
-class _WizwingCmd:
-    """WIZWING serial protocol command identifiers."""
-
-    HEADER = 0xAA
-    TAKEOFF = 0x01
-    LAND = 0x02
-    EMERGENCY = 0x03
-    MOVE = 0x04
-    TURN = 0x05
-    HOVER = 0x06
-    LED = 0x07
-    BATTERY_REQ = 0x08
-    HEIGHT_REQ = 0x09
-    FOOTER = 0x55
-
-
-_DIR_BYTE = {
-    Direction.FORWARD: 0x01,
-    Direction.BACKWARD: 0x02,
-    Direction.LEFT: 0x03,
-    Direction.RIGHT: 0x04,
-    Direction.UP: 0x05,
-    Direction.DOWN: 0x06,
+# Framework Direction -> WIZWING text verb
+_DIRECTION_VERB = {
+    Direction.FORWARD: "forward",
+    Direction.BACKWARD: "back",
+    Direction.LEFT: "left",
+    Direction.RIGHT: "right",
+    Direction.UP: "up",
+    Direction.DOWN: "down",
 }
 
-
-def _checksum(payload: bytes) -> int:
-    """Calculate a simple additive checksum (mod 256)."""
-    return sum(payload) & 0xFF
-
-
-def _build_packet(cmd_id: int, payload: bytes = b"") -> bytes:
-    """Build a WIZWING serial packet.
-
-    Format: [HEADER][CMD][LEN][PAYLOAD...][CHECKSUM][FOOTER]
-    Checksum covers CMD + LEN + PAYLOAD.
-    """
-    length = len(payload)
-    body = bytes([cmd_id, length]) + payload
-    chk = _checksum(body)
-    return bytes([_WizwingCmd.HEADER]) + body + bytes([chk, _WizwingCmd.FOOTER])
+# Heuristic: at max joystick strength (500), the drone moves ~1 m/s.
+_MAX_SPEED_M_S = 1.0
 
 
 @register_drone("wizwing")
 class WizwingAdapter(DroneAdapter):
-    """Adapter translating unified commands into WIZWING serial byte packets."""
+    """Adapter wrapping the WIZWING ASCII text protocol over pyserial."""
+
+    DEFAULT_BAUDRATE = 9600
 
     def __init__(
         self,
         name: str = "wizwing",
         port: str = "COM3",
-        baudrate: int = 115200,
+        baudrate: int = DEFAULT_BAUDRATE,
     ) -> None:
         super().__init__(name=name)
         self._port = port
         self._baudrate = baudrate
         self._serial: Any = None
+
+    # --- Lifecycle ---
 
     def connect(self, **kwargs: Any) -> None:
         port = kwargs.get("port", self._port)
@@ -96,96 +90,171 @@ class WizwingAdapter(DroneAdapter):
         try:
             import serial  # type: ignore[import-untyped]
 
-            self._serial = serial.Serial(port=port, baudrate=baudrate, timeout=2)
+            self._serial = serial.Serial(
+                port=port,
+                baudrate=baudrate,
+                parity="N",
+                stopbits=1,
+                bytesize=8,
+                timeout=8,
+            )
+            # Pairing command per the WIZWING sample (cable-attached auto-pair)
+            self._send("connect")
             self._status = DroneStatus.CONNECTED
-            logger.info("WIZWING connected on %s @ %d", port, baudrate)
+            logger.info("WIZWING connected on %s @ %d baud", port, baudrate)
         except Exception as e:
             raise DroneConnectionError(f"WIZWING serial open failed: {e}") from e
 
     def disconnect(self) -> None:
-        if self._serial and self._serial.is_open:
-            self._serial.close()
+        if self._serial is not None:
+            try:
+                if self._serial.is_open:
+                    self._send("off")  # stop motors, best effort
+                    self._serial.close()
+            except Exception as e:
+                logger.warning("WIZWING close failed: %s", e)
         self._status = DroneStatus.DISCONNECTED
         self._serial = None
         logger.info("WIZWING disconnected")
 
+    # --- Flight primitives (NATIVE) ---
+
     def takeoff(self) -> None:
-        self._send_packet(_build_packet(_WizwingCmd.TAKEOFF))
+        self._send("takeoff")
         self._status = DroneStatus.FLYING
         logger.info("WIZWING takeoff")
 
     def land(self) -> None:
-        self._send_packet(_build_packet(_WizwingCmd.LAND))
+        self._send("land")
         self._status = DroneStatus.CONNECTED
-        logger.info("WIZWING landed")
+        logger.info("WIZWING land")
 
     def emergency_stop(self) -> None:
-        self._send_packet(_build_packet(_WizwingCmd.EMERGENCY))
+        try:
+            self._send("emergency")
+        except Exception as e:
+            logger.warning("WIZWING emergency send failed: %s", e)
         self._status = DroneStatus.CONNECTED
         logger.warning("WIZWING emergency stop")
 
     def move(self, direction: Direction, distance: float = 1.0, speed: float = 50.0) -> None:
-        dir_byte = _DIR_BYTE.get(direction)
-        if dir_byte is None:
+        verb = _DIRECTION_VERB.get(direction)
+        if verb is None:
             raise DroneCommandError(f"Unsupported direction for WIZWING: {direction}")
-        dist_cm = int(distance * 100)
-        payload = struct.pack(">BHB", dir_byte, dist_cm, int(speed))
-        self._send_packet(_build_packet(_WizwingCmd.MOVE, payload))
-        logger.info("WIZWING move dir=0x%02X dist=%dcm speed=%d", dir_byte, dist_cm, int(speed))
+
+        # Translate units:
+        #   framework speed (0-100%) -> WIZWING joystick strength (20-500)
+        #   framework distance (m) + speed -> WIZWING duration (ms)
+        speed_clamped = max(0.0, min(100.0, speed))
+        strength = max(20, min(500, int(speed_clamped * 5)))
+        if speed_clamped == 0:
+            duration_ms = 0
+        else:
+            duration_ms = int(
+                distance / (speed_clamped / 100.0 * _MAX_SPEED_M_S) * 1000
+            )
+
+        self._send(f"{verb} {strength} {duration_ms}")
+        logger.info(
+            "WIZWING move %s strength=%d duration=%dms (distance=%.2fm, speed=%.0f%%)",
+            verb, strength, duration_ms, distance, speed_clamped,
+        )
 
     def turn(self, degrees: float) -> None:
-        sign = 0x00 if degrees >= 0 else 0x01
-        payload = struct.pack(">BH", sign, int(abs(degrees)))
-        self._send_packet(_build_packet(_WizwingCmd.TURN, payload))
-        logger.info("WIZWING turn %.1f degrees", degrees)
+        # Framework: +degrees = clockwise; WIZWING: 'cw' / 'ccw' commands.
+        verb = "cw" if degrees > 0 else "ccw"
+        # Assume strength=200 rotates at ~90 deg/sec; tune as needed.
+        strength = 200
+        duration_ms = int(abs(degrees) / 90.0 * 1000)
+        self._send(f"{verb} {strength} {duration_ms}")
+        logger.info(
+            "WIZWING turn %s strength=%d duration=%dms (degrees=%.1f)",
+            verb, strength, duration_ms, degrees,
+        )
+
+    # --- Compensatory mechanisms ---
 
     def hover(self, duration: float = 1.0) -> None:
-        payload = struct.pack(">H", int(duration * 1000))
-        self._send_packet(_build_packet(_WizwingCmd.HOVER, payload))
-        logger.info("WIZWING hover %.1fs", duration)
+        """COMPENSATORY: WIZWING has no native hover command.
+
+        The drone naturally maintains position when no movement command is
+        active (its flight controller stabilises altitude). We emulate the
+        hover semantics by blocking the caller for the requested duration
+        without sending any motion command.
+        """
+        self._ensure_connected()
+        logger.warning(
+            "WIZWING hover emulated via time.sleep (no native hover command)"
+        )
+        time.sleep(duration)
 
     def set_led(self, color: LEDColor) -> None:
-        payload = bytes([color.red, color.green, color.blue, color.brightness])
-        self._send_packet(_build_packet(_WizwingCmd.LED, payload))
-        logger.info("WIZWING LED set to (%d,%d,%d)", color.red, color.green, color.blue)
+        """COMPENSATORY: WIZWING only exposes 'funled' (a preset 4-colour cycle).
+
+        Arbitrary RGB cannot be specified. The adapter sends the 'funled'
+        command and warns that the requested colour was ignored. Calling
+        ``set_led`` again toggles the LED on / off.
+        """
+        self._ensure_connected()
+        logger.warning(
+            "WIZWING set_led: only 'funled' (preset 4-colour cycle) available; "
+            "requested RGB=(%d,%d,%d) ignored",
+            color.red, color.green, color.blue,
+        )
+        self._send("funled")
+
+    # --- Telemetry (NATIVE) ---
 
     def get_battery(self) -> int:
-        self._send_packet(_build_packet(_WizwingCmd.BATTERY_REQ))
-        response = self._read_response(expected_cmd=_WizwingCmd.BATTERY_REQ)
-        if response and len(response) >= 1:
-            return response[0]
-        return -1
+        """Request battery level via 'battery?' and parse the ASCII response."""
+        self._send("battery?")
+        response = self._read_response()
+        return self._parse_int(response, fallback=-1)
 
     def get_height(self) -> float:
-        self._send_packet(_build_packet(_WizwingCmd.HEIGHT_REQ))
-        response = self._read_response(expected_cmd=_WizwingCmd.HEIGHT_REQ)
-        if response and len(response) >= 2:
-            # uint16 BE in cm; convert to meters for the unified API
-            cm = struct.unpack(">H", response[:2])[0]
-            return cm / 100.0
-        return -1.0
+        """Request barometer-derived height via 'height?' and parse response."""
+        self._send("height?")
+        response = self._read_response()
+        return self._parse_float(response, fallback=-1.0)
 
     # --- Internal helpers ---
 
-    def _send_packet(self, packet: bytes) -> None:
+    def _send(self, command: str) -> None:
+        """Send an ASCII text command terminated by carriage return."""
         self._ensure_connected()
-        logger.debug("WIZWING TX: %s", packet.hex())
-        self._serial.write(packet)
+        payload = (command + "\r").encode("ascii")
+        logger.debug("WIZWING TX: %r", payload)
+        self._serial.write(payload)
 
-    def _read_response(self, expected_cmd: int) -> Optional[bytes]:
-        """Read and parse a response packet from the WIZWING drone."""
-        self._ensure_connected()
-        header = self._serial.read(3)  # [HEADER, CMD, LEN]
-        if len(header) < 3 or header[0] != _WizwingCmd.HEADER:
+    def _read_response(self) -> Optional[str]:
+        """Read one line from the serial port; return decoded string or None."""
+        if self._serial is None or not self._serial.is_open:
             return None
-        cmd, length = header[1], header[2]
-        payload = self._serial.read(length)
-        self._serial.read(2)  # [CHECKSUM, FOOTER]
-        if cmd != expected_cmd:
-            logger.warning("WIZWING unexpected response cmd: 0x%02X", cmd)
-            return None
-        return payload
+        try:
+            if self._serial.readable():
+                line = self._serial.readline()
+                if line:
+                    return line.decode("ascii", errors="replace").rstrip()
+        except Exception as e:
+            logger.warning("WIZWING readline failed: %s", e)
+        return None
 
     def _ensure_connected(self) -> None:
-        if self._serial is None or not self._serial.is_open:
-            raise DroneConnectionError("WIZWING serial port not open")
+        if self._serial is None or not getattr(self._serial, "is_open", False):
+            raise DroneConnectionError("WIZWING serial port is not open")
+
+    @staticmethod
+    def _parse_int(s: Optional[str], fallback: int = -1) -> int:
+        """Extract the first integer from a response string."""
+        if not s:
+            return fallback
+        match = re.search(r"-?\d+", s)
+        return int(match.group()) if match else fallback
+
+    @staticmethod
+    def _parse_float(s: Optional[str], fallback: float = -1.0) -> float:
+        """Extract the first floating-point number from a response string."""
+        if not s:
+            return fallback
+        match = re.search(r"-?\d+(?:\.\d+)?", s)
+        return float(match.group()) if match else fallback

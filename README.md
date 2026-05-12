@@ -206,24 +206,32 @@ For each abstract command, the table below shows whether the platform supports
 it via a **NATIVE** primitive (direct API call) or via a **COMPENSATORY**
 mechanism implemented by the adapter (extra work to bridge a heterogeneity).
 
-| Command          | CoDrone EDU | CodingRider                                   | WIZWING |
-|------------------|-------------|------------------------------------------------|---------|
-| `connect`        | NATIVE      | NATIVE (`drone.open(port)`)                    | NATIVE  |
-| `disconnect`     | NATIVE      | NATIVE (`drone.close()`)                       | NATIVE  |
-| `takeoff`        | NATIVE      | NATIVE (`drone.sendTakeOff()`)                 | NATIVE  |
-| `land`           | NATIVE      | NATIVE (`drone.sendLanding()`)                 | NATIVE  |
-| `emergency_stop` | NATIVE      | NATIVE (`drone.sendStop()`)                    | NATIVE  |
-| `move`           | NATIVE      | NATIVE (`sendControlWhile`)                    | NATIVE  |
-| `turn`           | NATIVE      | NATIVE (`sendControlWhile`)                    | NATIVE  |
-| `hover`          | NATIVE      | NATIVE (`sendControlWhile(0,0,0,0,ms)`)        | NATIVE  |
-| `set_led`        | NATIVE      | NATIVE (`sendLightModeColor`)                  | NATIVE  |
-| `get_battery`    | NATIVE      | **COMP** (async→sync event bridge)             | NATIVE  |
-| `get_height`     | NATIVE      | **COMP** (async→sync event bridge)             | NATIVE  |
+| Command          | CoDrone EDU | CodingRider                                   | WIZWING                                          |
+|------------------|-------------|------------------------------------------------|--------------------------------------------------|
+| `connect`        | NATIVE      | NATIVE (`drone.open(port)`)                    | NATIVE (`serial.Serial` + `connect\r`)           |
+| `disconnect`     | NATIVE      | NATIVE (`drone.close()`)                       | NATIVE (`off\r` + `serial.close()`)              |
+| `takeoff`        | NATIVE      | NATIVE (`drone.sendTakeOff()`)                 | NATIVE (`takeoff\r`)                             |
+| `land`           | NATIVE      | NATIVE (`drone.sendLanding()`)                 | NATIVE (`land\r`)                                |
+| `emergency_stop` | NATIVE      | NATIVE (`drone.sendStop()`)                    | NATIVE (`emergency\r`)                           |
+| `move`           | NATIVE      | NATIVE (`sendControlWhile`)                    | NATIVE (`<verb> <strength> <ms>\r`)              |
+| `turn`           | NATIVE      | NATIVE (`sendControlWhile`)                    | NATIVE (`cw|ccw <strength> <ms>\r`)              |
+| `hover`          | NATIVE      | NATIVE (`sendControlWhile(0,0,0,0,ms)`)        | **COMP** (no native command — `time.sleep`)      |
+| `set_led`        | NATIVE      | NATIVE (`sendLightModeColor`)                  | **COMP** (only `funled` preset; no RGB)          |
+| `get_battery`    | NATIVE      | **COMP** (async→sync event bridge)             | NATIVE (`battery?\r` + readline)                 |
+| `get_height`     | NATIVE      | **COMP** (async→sync event bridge)             | NATIVE (`height?\r` + readline)                  |
 
-CodingRider has **2 compensatory mechanisms**, both for telemetry: it exposes
-battery and altitude only via an event-driven `setEventHandler` +
-`sendRequest` pattern, while the unified interface requires synchronous
-`get_X()` returns. The adapter bridges the paradigm using `threading.Event`.
+**Each non-trivial platform exposes exactly 2 compensatory mechanisms**, and
+they cover three distinct kinds of heterogeneity:
+
+| Kind of compensation       | Where it appears                          | What the adapter does |
+|----------------------------|-------------------------------------------|------------------------|
+| **Paradigm bridge** (async→sync) | CodingRider `get_battery`, `get_height` | Registers callback, sends request, blocks on `threading.Event()` until the event fires. |
+| **Missing primitive**            | WIZWING `hover`                          | Emulates hover with `time.sleep()`; the flight controller stabilises altitude automatically. |
+| **Capability gap**               | WIZWING `set_led`                        | Sends `funled` (preset 4-colour cycle) and warns that the requested RGB triplet is ignored. |
+
+CoDrone EDU has 0 compensatory mechanisms — its SDK aligns 1:1 with the
+unified interface. CodingRider and WIZWING each require 2 compensations, but
+for orthogonal reasons (interaction paradigm vs. missing/limited primitives).
 
 ## Adding a New Drone Platform
 
@@ -407,19 +415,26 @@ only vendor-specific tokens are the 3 registry keys passed to `add_drone()`.
 |-----------------------|--------|------|---------|------|------|--------|--------------|--------|
 | `mock_codrone_edu`    | 11     | **11** | 0       | 0    | 0    | 11     | 0            | 10.1   |
 | `mock_coding_rider`   | 11     | **11** | 0       | 0    | 0    | 8      | 3            | 9.8    |
-| `mock_wizwing`        | 11     | **11** | 0       | 0    | 0    | 11     | 0            | 9.0    |
-| **TOTAL**             | **33** | **33 (100%)** | 0   | 0    | 0    | 30     | 3            | —      |
+| `mock_wizwing`        | 11     | **11** | 0       | 0    | 0    | 9      | 2            | 9.0    |
+| **TOTAL**             | **33** | **33 (100%)** | 0   | 0    | 0    | 28     | 5            | —      |
 
 **Pass rate: 33/33 = 100%.** Zero failures, zero partial degradations, zero skips.
 
-The 3 COMPENSATORY executions in CodingRider correspond to **2 distinct compensatory mechanisms** (the test suite calls `get_battery` twice to verify drain):
+The 5 COMPENSATORY executions correspond to **4 distinct compensatory mechanisms** spread across two platforms (the test suite calls `get_battery` twice to verify drain, hence 5 executions of 4 mechanisms):
 
-| Mechanism | Why compensatory |
-|-----------|------------------|
-| `get_battery` | CodingRider exposes battery only via `setEventHandler(DataType.State, cb)` + `sendRequest(...)`. The adapter bridges the async callback model to a synchronous return using `threading.Event()`. |
-| `get_height`  | Same pattern using `DataType.Altitude`. |
+| Platform     | Mechanism      | Kind                  | Why compensatory |
+|--------------|----------------|-----------------------|------------------|
+| CodingRider  | `get_battery`  | Paradigm bridge       | Exposes battery only via `setEventHandler(DataType.State, cb)` + `sendRequest(...)`. The adapter blocks on `threading.Event()` until the async callback fires. |
+| CodingRider  | `get_height`   | Paradigm bridge       | Same pattern using `DataType.Altitude`. |
+| WIZWING      | `hover`        | Missing primitive     | No `hover` command exists in the WIZWING text protocol. The adapter emulates with `time.sleep(duration)`; the FC stabilises altitude automatically. |
+| WIZWING      | `set_led`      | Capability gap        | WIZWING only exposes `funled` (a preset 4-colour cycle). Arbitrary RGB cannot be specified. The adapter sends `funled` and warns that the requested colour is ignored. |
 
-This is the **only** type of heterogeneity the framework actively compensates for across all three platforms — a paradigm mismatch (async/sync), not a missing capability.
+Three distinct kinds of heterogeneity are absorbed by the Adapter pattern:
+**paradigm mismatches** (async vs. sync), **missing primitives** (no native
+hover), and **capability gaps** (LED limited to presets). The framework
+encapsulates all three transparently — user code continues to call
+`DroneCommand.hover(2.0)` and `DroneCommand.set_led(LEDColor(255,0,0))`
+without knowing which platform absorbs what.
 
 > See `charts/fig07_interop_verdicts.png`, `fig08_interop_implementation.png`, `fig09_interop_timing.png`, `fig10_interop_matrix.png`.
 
