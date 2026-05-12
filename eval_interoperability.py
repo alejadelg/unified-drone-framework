@@ -718,7 +718,11 @@ def setup_real_mode() -> None:
     real-mode code path even on a machine without drone hardware.
     """
     from unittest.mock import MagicMock
-    for fake in ("CoDrone", "CodingRider", "CodingRider.drone", "serial"):
+    for fake in (
+        "codrone_edu", "codrone_edu.drone",
+        "CodingRider", "CodingRider.drone", "CodingRider.protocol",
+        "serial",
+    ):
         sys.modules.setdefault(fake, MagicMock())
 
 

@@ -231,13 +231,18 @@ class WizwingAdapter(DroneAdapter):
         if self._serial is None or not self._serial.is_open:
             return None
         try:
-            if self._serial.readable():
-                line = self._serial.readline()
-                if line:
-                    return line.decode("ascii", errors="replace").rstrip()
+            if not self._serial.readable():
+                return None
+            line = self._serial.readline()
+            if not line:
+                return None
+            # Only proceed if we actually got bytes (mocks may return anything)
+            if not isinstance(line, (bytes, bytearray)):
+                return None
+            return line.decode("ascii", errors="replace").rstrip()
         except Exception as e:
             logger.warning("WIZWING readline failed: %s", e)
-        return None
+            return None
 
     def _ensure_connected(self) -> None:
         if self._serial is None or not getattr(self._serial, "is_open", False):

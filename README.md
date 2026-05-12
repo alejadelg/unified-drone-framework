@@ -60,11 +60,11 @@ WIZWING drone — the framework handles the translation transparently.
 
 ## Supported Drone Platforms
 
-| Platform     | Library              | Communication                    | Registry Key      |
-|--------------|----------------------|----------------------------------|-------------------|
-| CoDrone EDU  | CoDrone (Robolink)   | Radio Frequency                  | `codrone_edu`     |
-| CodingRider  | CodingRider.drone    | Radio Frequency                  | `coding_rider`    |
-| WIZWING      | pyserial             | Radio Frequency and Wi-Fi        | `wizwing`         |
+| Platform     | Python library        | Communication                    | Registry Key      |
+|--------------|-----------------------|----------------------------------|-------------------|
+| CoDrone EDU  | `codrone_edu.drone`   | Radio Frequency                  | `codrone_edu`     |
+| CodingRider  | `CodingRider.drone`   | Radio Frequency                  | `coding_rider`    |
+| WIZWING      | `pyserial`            | Radio Frequency and Wi-Fi        | `wizwing`         |
 
 ## Architecture
 
@@ -109,7 +109,7 @@ cd unified-drone-framework
 ### Install drone libraries (only what you need)
 
 ```bash
-pip install CoDrone        # for CoDrone EDU
+pip install codrone-edu    # for CoDrone EDU (codrone_edu.drone module)
 pip install CodingRider    # for CodingRider
 pip install pyserial       # for WIZWING
 ```
@@ -206,19 +206,19 @@ For each abstract command, the table below shows whether the platform supports
 it via a **NATIVE** primitive (direct API call) or via a **COMPENSATORY**
 mechanism implemented by the adapter (extra work to bridge a heterogeneity).
 
-| Command          | CoDrone EDU | CodingRider                                   | WIZWING                                          |
-|------------------|-------------|------------------------------------------------|--------------------------------------------------|
-| `connect`        | NATIVE      | NATIVE (`drone.open(port)`)                    | NATIVE (`serial.Serial` + `connect\r`)           |
-| `disconnect`     | NATIVE      | NATIVE (`drone.close()`)                       | NATIVE (`off\r` + `serial.close()`)              |
-| `takeoff`        | NATIVE      | NATIVE (`drone.sendTakeOff()`)                 | NATIVE (`takeoff\r`)                             |
-| `land`           | NATIVE      | NATIVE (`drone.sendLanding()`)                 | NATIVE (`land\r`)                                |
-| `emergency_stop` | NATIVE      | NATIVE (`drone.sendStop()`)                    | NATIVE (`emergency\r`)                           |
-| `move`           | NATIVE      | NATIVE (`sendControlWhile`)                    | NATIVE (`<verb> <strength> <ms>\r`)              |
-| `turn`           | NATIVE      | NATIVE (`sendControlWhile`)                    | NATIVE (`cw|ccw <strength> <ms>\r`)              |
-| `hover`          | NATIVE      | NATIVE (`sendControlWhile(0,0,0,0,ms)`)        | **COMP** (no native command — `time.sleep`)      |
-| `set_led`        | NATIVE      | NATIVE (`sendLightModeColor`)                  | **COMP** (only `funled` preset; no RGB)          |
-| `get_battery`    | NATIVE      | **COMP** (async→sync event bridge)             | NATIVE (`battery?\r` + readline)                 |
-| `get_height`     | NATIVE      | **COMP** (async→sync event bridge)             | NATIVE (`height?\r` + readline)                  |
+| Command          | CoDrone EDU                                | CodingRider                                  | WIZWING                                          |
+|------------------|--------------------------------------------|-----------------------------------------------|--------------------------------------------------|
+| `connect`        | NATIVE (`Drone().pair(portname=...)`)      | NATIVE (`Drone().open(port)`)                 | NATIVE (`serial.Serial(...)` + `connect\r`)      |
+| `disconnect`     | NATIVE (`drone.close()`)                   | NATIVE (`drone.close()`)                      | NATIVE (`off\r` + `serial.close()`)              |
+| `takeoff`        | NATIVE (`drone.takeoff()`)                 | NATIVE (`drone.sendTakeOff()`)                | NATIVE (`takeoff\r`)                             |
+| `land`           | NATIVE (`drone.land()`)                    | NATIVE (`drone.sendLanding()`)                | NATIVE (`land\r`)                                |
+| `emergency_stop` | NATIVE (`drone.emergency_stop()`)          | NATIVE (`drone.sendStop()`)                   | NATIVE (`emergency\r`)                           |
+| `move`           | NATIVE (`drone.move_distance(x,y,z,v)`)    | NATIVE (`drone.sendControlWhile(...)`)        | NATIVE (`<verb> <strength> <ms>\r`)              |
+| `turn`           | NATIVE (`drone.turn(power, seconds)`)      | NATIVE (`drone.sendControlWhile(0,0,yaw,...)`)| NATIVE (`cw\|ccw <strength> <ms>\r`)             |
+| `hover`          | NATIVE (`drone.hover(seconds)`)            | NATIVE (`sendControlWhile(0,0,0,0,ms)`)       | **COMP** (no native command — `time.sleep`)      |
+| `set_led`        | NATIVE (`drone.set_drone_LED(r,g,b,brt)`)  | NATIVE (`drone.sendLightModeColor(...)`)      | **COMP** (only `funled` preset; no RGB)          |
+| `get_battery`    | NATIVE (`drone.get_battery()`)             | **COMP** (async→sync event bridge)            | NATIVE (`battery?\r` + readline)                 |
+| `get_height`     | NATIVE (`drone.get_height() / 100`)        | **COMP** (async→sync event bridge)            | NATIVE (`height?\r` + readline)                  |
 
 **Each non-trivial platform exposes exactly 2 compensatory mechanisms**, and
 they cover three distinct kinds of heterogeneity:

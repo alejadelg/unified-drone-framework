@@ -20,7 +20,11 @@ import sys
 from unittest.mock import MagicMock
 
 # --- Make the script runnable without real hardware ---
-for _mod in ("CoDrone", "CodingRider", "CodingRider.drone", "serial"):
+for _mod in (
+    "codrone_edu", "codrone_edu.drone",
+    "CodingRider", "CodingRider.drone", "CodingRider.protocol",
+    "serial",
+):
     sys.modules[_mod] = MagicMock()
 
 from unified_drone import (
