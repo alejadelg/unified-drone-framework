@@ -15,6 +15,7 @@ API translation reference:
     hover()        -> .hover(seconds)
     set_led()      -> .set_drone_LED(r, g, b, brightness)
     get_battery()  -> .get_battery()
+    get_height()   -> .get_height() / 100.0   (cm -> meters)
 """
 
 import logging
@@ -118,6 +119,15 @@ class CoDroneEduAdapter(DroneAdapter):
     def get_battery(self) -> int:
         self._ensure_connected()
         return self._drone.get_battery()
+
+    def get_height(self) -> float:
+        self._ensure_connected()
+        # CoDrone EDU returns height in cm; convert to meters for the unified API
+        try:
+            return float(self._drone.get_height()) / 100.0
+        except Exception as e:
+            logger.warning("CoDrone EDU get_height failed: %s", e)
+            return -1.0
 
     def _ensure_connected(self) -> None:
         if self._drone is None or self._status == DroneStatus.DISCONNECTED:

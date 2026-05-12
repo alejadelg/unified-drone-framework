@@ -16,6 +16,7 @@ API translation reference:
     hover()        -> packet(CMD=0x06, payload=[duration_ms])
     set_led()      -> packet(CMD=0x07, payload=[r, g, b, brightness])
     get_battery()  -> packet(CMD=0x08) + read response
+    get_height()   -> packet(CMD=0x09) + read response (uint16 BE cm)
 """
 
 import logging
@@ -43,6 +44,7 @@ class _WizwingCmd:
     HOVER = 0x06
     LED = 0x07
     BATTERY_REQ = 0x08
+    HEIGHT_REQ = 0x09
     FOOTER = 0x55
 
 
@@ -153,6 +155,15 @@ class WizwingAdapter(DroneAdapter):
         if response and len(response) >= 1:
             return response[0]
         return -1
+
+    def get_height(self) -> float:
+        self._send_packet(_build_packet(_WizwingCmd.HEIGHT_REQ))
+        response = self._read_response(expected_cmd=_WizwingCmd.HEIGHT_REQ)
+        if response and len(response) >= 2:
+            # uint16 BE in cm; convert to meters for the unified API
+            cm = struct.unpack(">H", response[:2])[0]
+            return cm / 100.0
+        return -1.0
 
     # --- Internal helpers ---
 

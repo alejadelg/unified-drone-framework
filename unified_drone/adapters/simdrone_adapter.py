@@ -237,6 +237,12 @@ class MockDroneAdapter(DroneAdapter):
         self._ensure_connected()
         return self._battery
 
+    def get_height(self) -> float:
+        # SimDrone exposes height via the same protocol channel as position;
+        # we already track it natively in self._z (metres).
+        self._ensure_connected()
+        return self._z
+
     # --- Internal helpers ---
 
     def _send(self, cmd: str) -> None:
