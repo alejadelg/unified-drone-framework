@@ -209,10 +209,19 @@ def interface_compliance() -> Dict[str, Any]:
 
 
 def integration_test() -> Dict[str, Any]:
+    """Run the canonical STANDARD_MISSION via broadcast against all 4 drones.
+
+    The mission is the same one used by ``version_a_framework.py`` and
+    ``eval_interoperability.py``, ensuring the three experiments share a
+    single reference scenario.
+    """
+    from unified_drone.scenarios import STANDARD_MISSION
+    from unified_drone import FlightAction
+
     manager = DroneManager()
     manager.add_drone("edu_1", "codrone_edu", port="COM4")
     manager.add_drone("rider_1", "coding_rider")
-    manager.add_drone("wiz_1", "wizwing", port="COM3", baudrate=115200)
+    manager.add_drone("wiz_1", "wizwing", port="COM3", baudrate=9600)
     manager.add_drone("sim_1", "simdrone")
 
     n_drones = len(manager.drone_ids)
@@ -220,32 +229,37 @@ def integration_test() -> Dict[str, Any]:
     def count_ok(results: Dict[str, Any]) -> int:
         return sum(1 for r in results.values() if not isinstance(r, Exception))
 
-    connect_results = manager.broadcast_command(DroneCommand.connect())
-    takeoff_results = manager.broadcast_command(DroneCommand.takeoff())
-
-    # SimDrone-specific: send a move command and inspect the resulting state
-    manager.send_command(
-        "sim_1",
-        DroneCommand.move(Direction.FORWARD, distance=2.5, speed=70),
-    )
-    manager.send_command("sim_1", DroneCommand.turn(degrees=90))
-    manager.send_command(
-        "sim_1",
-        DroneCommand.set_led(LEDColor(red=255, green=128, blue=0, brightness=80)),
-    )
-
-    land_results = manager.broadcast_command(DroneCommand.land())
-
     sim_drone: MockDroneAdapter = manager.get_drone("sim_1")  # type: ignore[assignment]
+
+    # Track per-step success across all 4 drones for the canonical mission.
+    # Capture telemetry from the SimDrone BEFORE the disconnect step so we
+    # can still query battery/position/yaw without raising a connection error.
+    per_step_ok: Dict[str, int] = {}
+    connect_results: Dict[str, Any] = {}
+    takeoff_results: Dict[str, Any] = {}
+    land_results: Dict[str, Any] = {}
+    simdrone_battery_snapshot: int = sim_drone._battery
+    for cmd in STANDARD_MISSION:
+        results = manager.broadcast_command(cmd)
+        per_step_ok[cmd.action.name] = count_ok(results)
+        if cmd.action == FlightAction.CONNECT:
+            connect_results = results
+        elif cmd.action == FlightAction.TAKEOFF:
+            takeoff_results = results
+        elif cmd.action == FlightAction.LAND:
+            land_results = results
+            simdrone_battery_snapshot = sim_drone._battery  # capture before disconnect
 
     return {
         "drones_managed": n_drones,
         "connect_ok": count_ok(connect_results),
         "takeoff_ok": count_ok(takeoff_results),
         "land_ok": count_ok(land_results),
+        "mission_steps_total": len(STANDARD_MISSION),
+        "mission_steps_4of4": sum(1 for n in per_step_ok.values() if n == n_drones),
         "simdrone_position": sim_drone.position,
         "simdrone_yaw": sim_drone.yaw_degrees,
-        "simdrone_battery": sim_drone.get_battery(),
+        "simdrone_battery": simdrone_battery_snapshot,
         "simdrone_commands_sent": sim_drone.commands_sent,
         "all_drones_responded": (
             count_ok(connect_results) == n_drones

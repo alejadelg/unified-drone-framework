@@ -475,23 +475,14 @@ def implementation_type(platform_key: str, command_label: str) -> str:
 
 
 # ---------------------------------------------------------------------
-# Test suite
+# Test suite — imported from the canonical scenarios module so all three
+# experiments (extensibility, effort, interoperability) share the same
+# mission definition.
 # ---------------------------------------------------------------------
 
-# A logical sequence that exercises every command in the unified interface.
-TEST_SUITE: List[Tuple[str, Optional[DroneCommand]]] = [
-    ("connect",        DroneCommand.connect()),
-    ("takeoff",        DroneCommand.takeoff()),
-    ("hover",          DroneCommand.hover(duration=3.0)),
-    ("move",           DroneCommand.move(Direction.FORWARD, distance=50, speed=30)),
-    ("turn",           DroneCommand.turn(degrees=90)),
-    ("get_battery",    DroneCommand.get_battery()),
-    ("get_height",     DroneCommand.get_height()),
-    ("set_led",        DroneCommand.set_led(LEDColor(red=255, green=0, blue=0))),
-    ("get_battery_2",  DroneCommand.get_battery()),
-    ("land",           DroneCommand.land()),
-    ("disconnect",     DroneCommand.disconnect()),
-]
+from unified_drone.scenarios import STANDARD_MISSION_LABELED  # noqa: E402
+
+TEST_SUITE: List[Tuple[str, Optional[DroneCommand]]] = STANDARD_MISSION_LABELED
 
 
 # ---------------------------------------------------------------------

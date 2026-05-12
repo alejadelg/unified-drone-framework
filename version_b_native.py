@@ -1,26 +1,31 @@
 """Mission task implemented WITHOUT the framework, using native libraries.
 
-Task (identical to Version A):
-    Connect 3 drones (CoDrone EDU, CodingRider, WIZWING),
-    take off all three, fly a square pattern (forward 1 m, turn 90 deg, x4),
-    hover 2 s, query battery on all, set LED to green on all,
-    land all, disconnect all.
+Executes the same canonical 11-step mission as ``version_a_framework.py``
+and ``eval_interoperability.py``, but using the three vendor SDKs
+directly. Every logical step must be expanded into per-vendor branches
+because the SDKs disagree on names, parameter units, and interaction
+paradigms.
 
-This version exposes everything that the framework normally hides:
+What this version exposes that the framework normally hides:
+
   * 3 different connection patterns
         - CoDrone EDU:  Drone().pair(portname=...)
         - CodingRider:  Drone().open(port)
         - WIZWING:      serial.Serial(...) + b'connect\\r'
+
   * 3 different command surfaces
-        - CoDrone EDU:  drone.takeoff() / drone.land() / drone.move_distance(...)
-        - CodingRider:  drone.sendTakeOff() / drone.sendLanding() /
-                        drone.sendControlWhile(roll,pitch,yaw,throttle,ms)
-        - WIZWING:      ASCII text commands ('takeoff\\r', 'forward 250 1000\\r', ...)
+        - CoDrone EDU:  drone.takeoff() / drone.move_distance(x,y,z,v) / ...
+        - CodingRider:  drone.sendTakeOff() /
+                        drone.sendControlWhile(roll,pitch,yaw,throttle,ms) /
+                        drone.sendLightModeColor(...) / ...
+        - WIZWING:      ASCII text ('takeoff\\r', 'forward 250 1000\\r', ...)
+
   * Manual async->sync bridge for CodingRider telemetry
-        (setEventHandler + sendRequest + threading.Event)
-  * Manual hover compensation for WIZWING (no native hover command)
-  * LED capability gap on WIZWING (only 'funled' preset cycle, no RGB)
-  * Independent error handling per platform
+        (setEventHandler + sendRequest + sleep)
+
+  * Manual hover compensation for WIZWING (no native hover)
+
+  * LED capability gap on WIZWING (only 'funled' preset; no RGB)
 """
 
 from __future__ import annotations
@@ -38,19 +43,19 @@ sys.modules["CodingRider.drone"] = MagicMock()
 sys.modules["CodingRider.protocol"] = MagicMock()
 sys.modules["serial"] = MagicMock()
 
-from codrone_edu.drone import Drone as CoDroneEDU  # type: ignore[import-not-found]
-from CodingRider.drone import Drone as CodingRiderDrone  # type: ignore[import-not-found]
-import serial                                          # type: ignore[import-not-found]
+from codrone_edu.drone import Drone as CoDroneEDU              # type: ignore[import-not-found]
+from CodingRider.drone import Drone as CodingRiderDrone        # type: ignore[import-not-found]
+import serial                                                   # type: ignore[import-not-found]
 
 logging.basicConfig(level=logging.WARNING, format="%(name)s | %(levelname)s | %(message)s")
 
 
 # ====================================================================
-# Per-platform setup (3 different patterns, 3 different error flavors)
+# Per-platform setup (3 different connection patterns)
 # ====================================================================
 
 def setup_codrone():
-    drone = CoDroneEDU()  # codrone_edu.drone.Drone
+    drone = CoDroneEDU()
     try:
         drone.pair(portname="COM4")
     except Exception as e:
@@ -60,7 +65,7 @@ def setup_codrone():
 
 
 def setup_coding_rider():
-    drone = CodingRiderDrone()  # CodingRider.drone.Drone
+    drone = CodingRiderDrone()
     try:
         drone.open("COM3")
     except Exception as e:
@@ -70,17 +75,12 @@ def setup_coding_rider():
 
 
 def setup_wizwing():
-    # WIZWING uses a text-based ASCII protocol over serial @ 9600 baud
     try:
         ser = serial.Serial(
-            port="COM3",
-            baudrate=9600,
-            parity="N",
-            stopbits=1,
-            bytesize=8,
-            timeout=8,
+            port="COM3", baudrate=9600,
+            parity="N", stopbits=1, bytesize=8, timeout=8,
         )
-        ser.write(b"connect\r")  # initial pairing
+        ser.write(b"connect\r")
     except Exception as e:
         print(f"[WIZWING] serial open failed: {e}")
         return None
@@ -88,83 +88,69 @@ def setup_wizwing():
 
 
 # ====================================================================
-# Per-operation broadcast: every logical action expands into 3 lines
-# of vendor-specific code. Note the divergent method names and units.
+# Per-step broadcast helpers — one per command of the standard mission
 # ====================================================================
 
-def takeoff_all(codrone_obj, rider_obj, wiz_obj):
-    if codrone_obj is not None:
-        codrone_obj.takeoff()                  # CoDrone EDU
-    if rider_obj is not None:
-        rider_obj.sendTakeOff()                # CodingRider
-    if wiz_obj is not None:
-        wiz_obj.write(b"takeoff\r")            # WIZWING (ASCII text)
+def takeoff_all(codrone, rider, wiz):
+    if codrone is not None:
+        codrone.takeoff()
+    if rider is not None:
+        rider.sendTakeOff()
+    if wiz is not None:
+        wiz.write(b"takeoff\r")
 
 
-def land_all(codrone_obj, rider_obj, wiz_obj):
-    if codrone_obj is not None:
-        codrone_obj.land()
-    if rider_obj is not None:
-        rider_obj.sendControlWhile(0, 0, 0, 0, 500)  # stop motion first
-        rider_obj.sendLanding()
-    if wiz_obj is not None:
-        wiz_obj.write(b"land\r")
+def hover_all(codrone, rider, wiz, seconds: float):
+    if codrone is not None:
+        codrone.hover(int(seconds))
+    if rider is not None:
+        rider.sendControlWhile(0, 0, 0, 0, int(seconds * 1000))
+    if wiz is not None:
+        time.sleep(seconds)  # COMPENSATORY: no native hover
 
 
-def move_forward_1m(codrone_obj, rider_obj, wiz_obj):
-    if codrone_obj is not None:
-        # CoDrone EDU: move_distance(x, y, z, velocity_m_s)
-        codrone_obj.move_distance(1.0, 0, 0, 1.0)
-    if rider_obj is not None:
-        # CodingRider: sendControlWhile(roll, pitch, yaw, throttle, ms)
-        rider_obj.sendControlWhile(0, 50, 0, 0, 1000)
-    if wiz_obj is not None:
-        # WIZWING: ASCII text "forward <strength> <ms>\r"
-        wiz_obj.write(b"forward 250 1000\r")
+def move_forward_all(codrone, rider, wiz, distance: float, speed: float):
+    if codrone is not None:
+        velocity_m_s = max(0.1, (speed / 100.0) * 2.0)
+        codrone.move_distance(distance, 0, 0, velocity_m_s)
+    if rider is not None:
+        duration_ms = int(distance / max(0.01, speed / 100.0) * 1000)
+        rider.sendControlWhile(0, int(speed), 0, 0, duration_ms)
+    if wiz is not None:
+        strength = max(20, min(500, int(speed * 5)))
+        duration_ms = int(distance / max(0.01, speed / 100.0) * 1000)
+        wiz.write(f"forward {strength} {duration_ms}\r".encode("ascii"))
 
 
-def turn_90_cw(codrone_obj, rider_obj, wiz_obj):
-    if codrone_obj is not None:
-        # CoDrone EDU: turn(power, seconds); negative power = right (CW)
-        codrone_obj.turn(power=-50, seconds=1.0)
-    if rider_obj is not None:
-        # CodingRider: yaw negative = CW
-        rider_obj.sendControlWhile(0, 0, -50, 0, 1000)
-    if wiz_obj is not None:
-        wiz_obj.write(b"cw 200 1000\r")
+def turn_cw_all(codrone, rider, wiz, degrees: float):
+    if codrone is not None:
+        codrone.turn(power=-50, seconds=abs(degrees) / 90.0)
+    if rider is not None:
+        rider.sendControlWhile(0, 0, -50, 0, int(abs(degrees) / 90.0 * 1000))
+    if wiz is not None:
+        wiz.write(f"cw 200 {int(abs(degrees) / 90.0 * 1000)}\r".encode("ascii"))
 
 
-def hover_all(codrone_obj, rider_obj, wiz_obj, seconds: float):
-    if codrone_obj is not None:
-        # CoDrone EDU: native hover(seconds)
-        codrone_obj.hover(int(seconds))
-    if rider_obj is not None:
-        # CodingRider: sendControlWhile(0,0,0,0,ms) with zero control = hover
-        rider_obj.sendControlWhile(0, 0, 0, 0, int(seconds * 1000))
-    if wiz_obj is not None:
-        # WIZWING has no native hover; emulate with time.sleep
-        time.sleep(seconds)
-
-
-def get_battery_all(codrone_obj, rider_obj, wiz_obj):
+def get_battery_all(codrone, rider, wiz):
     batteries = {}
-    if codrone_obj is not None:
-        # CoDrone EDU: synchronous get_battery() -> int percent
-        batteries["codrone"] = codrone_obj.get_battery()
-    if rider_obj is not None:
+    if codrone is not None:
+        batteries["codrone"] = codrone.get_battery()
+    if rider is not None:
         # CodingRider: ASYNC pattern — register handler + send request + wait
         from CodingRider.protocol import DataType, DeviceType  # type: ignore[import-not-found]
         result = {"battery": -1}
         def on_state(state):
-            result["battery"] = int(state.battery)
-        rider_obj.setEventHandler(DataType.State, on_state)
-        rider_obj.sendRequest(DeviceType.Drone, DataType.State)
+            try:
+                result["battery"] = int(state.battery)
+            except Exception:
+                pass
+        rider.setEventHandler(DataType.State, on_state)
+        rider.sendRequest(DeviceType.Drone, DataType.State)
         time.sleep(0.3)
         batteries["rider"] = result["battery"]
-    if wiz_obj is not None:
-        # WIZWING: write 'battery?\r' and read ASCII response line
-        wiz_obj.write(b"battery?\r")
-        line = wiz_obj.readline()
+    if wiz is not None:
+        wiz.write(b"battery?\r")
+        line = wiz.readline()
         try:
             batteries["wizwing"] = int(line.decode("ascii").strip())
         except Exception:
@@ -172,61 +158,121 @@ def get_battery_all(codrone_obj, rider_obj, wiz_obj):
     return batteries
 
 
-def set_led_green_all(codrone_obj, rider_obj, wiz_obj):
-    if codrone_obj is not None:
-        # CoDrone EDU: set_drone_LED(r, g, b, brightness 0-255)
-        codrone_obj.set_drone_LED(0, 255, 0, 255)
-    if rider_obj is not None:
-        # CodingRider: sendLightModeColor(mode, interval, r, g, b)
-        from CodingRider.protocol import LightModeDrone  # type: ignore[import-not-found]
-        rider_obj.sendLightModeColor(LightModeDrone.BodyHold, 255, 0, 255, 0)
-    if wiz_obj is not None:
-        # WIZWING: only 'funled' (preset cycle); RGB ignored
-        print("[WIZWING] LED limited to 'funled' preset cycle; green-specific not possible")
-        wiz_obj.write(b"funled\r")
-
-
-def disconnect_all(codrone_obj, rider_obj, wiz_obj):
-    if codrone_obj is not None:
+def get_height_all(codrone, rider, wiz):
+    heights = {}
+    if codrone is not None:
         try:
-            codrone_obj.close()                    # CoDrone EDU
+            heights["codrone"] = float(codrone.get_height()) / 100.0  # cm -> m
+        except Exception:
+            heights["codrone"] = -1.0
+    if rider is not None:
+        from CodingRider.protocol import DataType, DeviceType  # type: ignore[import-not-found]
+        result = {"altitude": -1.0}
+        def on_altitude(alt):
+            try:
+                result["altitude"] = float(alt.altitude)
+            except Exception:
+                pass
+        rider.setEventHandler(DataType.Altitude, on_altitude)
+        rider.sendRequest(DeviceType.Drone, DataType.Altitude)
+        time.sleep(0.3)
+        heights["rider"] = result["altitude"]
+    if wiz is not None:
+        wiz.write(b"height?\r")
+        line = wiz.readline()
+        try:
+            heights["wizwing"] = float(line.decode("ascii").strip())
+        except Exception:
+            heights["wizwing"] = -1.0
+    return heights
+
+
+def set_led_all(codrone, rider, wiz, r: int, g: int, b: int):
+    if codrone is not None:
+        codrone.set_drone_LED(r, g, b, 255)
+    if rider is not None:
+        from CodingRider.protocol import LightModeDrone  # type: ignore[import-not-found]
+        rider.sendLightModeColor(LightModeDrone.BodyHold, 255, r, g, b)
+    if wiz is not None:
+        # WIZWING: only 'funled' preset cycle available; RGB ignored
+        print(f"[WIZWING] LED limited to 'funled' preset cycle; "
+              f"requested RGB=({r},{g},{b}) ignored")
+        wiz.write(b"funled\r")
+
+
+def land_all(codrone, rider, wiz):
+    if codrone is not None:
+        codrone.land()
+    if rider is not None:
+        rider.sendControlWhile(0, 0, 0, 0, 500)
+        rider.sendLanding()
+    if wiz is not None:
+        wiz.write(b"land\r")
+
+
+def disconnect_all(codrone, rider, wiz):
+    if codrone is not None:
+        try:
+            codrone.close()
         except Exception as e:
             print(f"[CoDrone EDU] close error: {e}")
-    if rider_obj is not None:
+    if rider is not None:
         try:
-            rider_obj.close()                      # CodingRider (also close())
+            rider.close()
         except Exception as e:
             print(f"[CodingRider] close error: {e}")
-    if wiz_obj is not None:
+    if wiz is not None:
         try:
-            wiz_obj.write(b"off\r")                # stop motors
-            wiz_obj.close()                        # serial close
+            wiz.write(b"off\r")
+            wiz.close()
         except Exception as e:
             print(f"[WIZWING] close error: {e}")
 
 
 # ====================================================================
-# Mission entry point
+# Mission entry point — executes the same 11-step STANDARD_MISSION as
+# version_a_framework.py, but with explicit per-vendor branching at
+# every step.
 # ====================================================================
 
 def run_mission() -> None:
-    codrone_obj = setup_codrone()
-    rider_obj = setup_coding_rider()
-    wiz_obj = setup_wizwing()
+    # Step 1 (connect): per-platform setup
+    codrone = setup_codrone()
+    rider = setup_coding_rider()
+    wiz = setup_wizwing()
 
-    takeoff_all(codrone_obj, rider_obj, wiz_obj)
+    # Step 2 (takeoff)
+    takeoff_all(codrone, rider, wiz)
 
-    for _ in range(4):
-        move_forward_1m(codrone_obj, rider_obj, wiz_obj)
-        turn_90_cw(codrone_obj, rider_obj, wiz_obj)
+    # Step 3 (hover 3s)
+    hover_all(codrone, rider, wiz, seconds=3.0)
 
-    hover_all(codrone_obj, rider_obj, wiz_obj, 2.0)
-    batteries = get_battery_all(codrone_obj, rider_obj, wiz_obj)
-    print(f"Batteries: {batteries}")
-    set_led_green_all(codrone_obj, rider_obj, wiz_obj)
+    # Step 4 (move FORWARD distance=50 speed=30)
+    move_forward_all(codrone, rider, wiz, distance=50, speed=30)
 
-    land_all(codrone_obj, rider_obj, wiz_obj)
-    disconnect_all(codrone_obj, rider_obj, wiz_obj)
+    # Step 5 (turn 90 deg CW)
+    turn_cw_all(codrone, rider, wiz, degrees=90)
+
+    # Step 6 (get_battery — first read)
+    batteries_1 = get_battery_all(codrone, rider, wiz)
+    print(f"Batteries (initial): {batteries_1}")
+
+    # Step 7 (get_height)
+    heights = get_height_all(codrone, rider, wiz)
+    print(f"Heights: {heights}")
+
+    # Step 8 (set_led red)
+    set_led_all(codrone, rider, wiz, r=255, g=0, b=0)
+
+    # Step 9 (get_battery — second read, drain check)
+    batteries_2 = get_battery_all(codrone, rider, wiz)
+    print(f"Batteries (after activity): {batteries_2}")
+
+    # Step 10 (land)
+    land_all(codrone, rider, wiz)
+
+    # Step 11 (disconnect)
+    disconnect_all(codrone, rider, wiz)
 
 
 if __name__ == "__main__":

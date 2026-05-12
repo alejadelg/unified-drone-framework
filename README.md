@@ -345,7 +345,41 @@ The framework was evaluated empirically across three dimensions:
 2. **Development effort** — Lines of code, complexity, reusability vs. native libraries
 3. **Interoperability** — Per-command pass/fail across 3 mock platforms with realistic timing
 
-All evaluation scripts are reproducible and produce CSV outputs (`extensibility_results.csv`, `effort_comparison.csv`, `interoperability_results.csv`).
+All three experiments execute the **same canonical scenario** — the
+**Standard Mission** — defined in
+[`unified_drone/scenarios.py`](unified_drone/scenarios.py). This single
+shared mission guarantees that the three experiments speak the same
+vocabulary and produce directly comparable measurements.
+
+### Standard Mission (11 commands)
+
+| # | Step | Command | Parameters |
+|---|------|---------|------------|
+| 1 | connect       | `DroneCommand.connect()`      | — |
+| 2 | takeoff       | `DroneCommand.takeoff()`      | — |
+| 3 | hover         | `DroneCommand.hover()`        | `duration=3.0` |
+| 4 | move          | `DroneCommand.move()`         | `direction=FORWARD, distance=50, speed=30` |
+| 5 | turn          | `DroneCommand.turn()`         | `degrees=90` |
+| 6 | get_battery   | `DroneCommand.get_battery()`  | — (first read) |
+| 7 | get_height    | `DroneCommand.get_height()`   | — |
+| 8 | set_led       | `DroneCommand.set_led()`      | `LEDColor(red=255, green=0, blue=0)` |
+| 9 | get_battery_2 | `DroneCommand.get_battery()`  | — (drain check) |
+| 10 | land         | `DroneCommand.land()`         | — |
+| 11 | disconnect   | `DroneCommand.disconnect()`   | — |
+
+Each experiment adapts the mission's execution context but never its
+content:
+
+- **Experiment 1 (extensibility)** runs it via broadcast against four drones
+  (the 3 originals + SimDrone) to prove the new adapter accepts every command.
+- **Experiment 2 (effort)** runs it via broadcast (Version A) and as 11
+  per-vendor branches (Version B) to compare code complexity.
+- **Experiment 3 (interoperability)** runs it on each of the three mock
+  adapters to characterize per-command verdicts and timing.
+
+All evaluation scripts are reproducible and produce CSV outputs
+(`extensibility_results.csv`, `effort_comparison.csv`,
+`interoperability_results.csv`).
 
 ### 1. Extensibility (zero-modification proof)
 
@@ -391,24 +425,31 @@ predictable, consistent extension cost.
 
 **Hypothesis:** Using the framework drastically reduces code and complexity compared to using native libraries directly.
 
-**Method:** Implemented the same mission (connect 3 drones, takeoff all, fly a square pattern, hover, query battery, set LED, land, disconnect) in two ways:
+**Method:** The canonical **Standard Mission** (11 commands) is implemented twice:
 
 - **Version A** — `version_a_framework.py` using only the unified framework
-- **Version B** — `version_b_native.py` using `CoDrone`, `CodingRider.drone`, and `pyserial` directly
+  (a 2-line loop over `STANDARD_MISSION` calling `broadcast_command`).
+- **Version B** — `version_b_native.py` using `codrone_edu.drone`,
+  `CodingRider.drone`, and `pyserial` directly (per-vendor helper functions
+  with explicit branching at every step).
 
-| Metric                    | Version A (framework) | Version B (native) | Reduction |
-|---------------------------|-----------------------|---------------------|-----------|
-| Lines of code (logic only)| **31**                | 140                 | **78%**   |
-| Import statements         | **6**                 | 9                   | 33%       |
-| Distinct API method names | **12**                | 19                  | 37%       |
-| Drone-object variables    | **1** (`manager`)     | 6                   | 83%       |
-| If/elif decision blocks   | **0**                 | 26                  | **100%**  |
-| Try/except blocks         | **0**                 | 6                   | **100%**  |
-| **Reusable code (%)**     | **96.8%**             | 27.9%               | **+68.9pp** |
+Static analysis of both files with Python's `ast` module:
 
-The framework eliminates two classes of code entirely (if/elif vendor dispatch
-and try/except defensive blocks) and yields code that is **96.8% platform-agnostic** — the
-only vendor-specific tokens are the 3 registry keys passed to `add_drone()`.
+| Metric                    | Version A (framework) | Version B (native) | Reduction   |
+|---------------------------|-----------------------|---------------------|-------------|
+| Lines of code (logic only)| **19**                | 169                 | **89%**     |
+| Import statements         | **7**                 | 11                  | 36%         |
+| Distinct API method names | **3**                 | 23                  | **87%**     |
+| Drone-object variables    | **1** (`manager`)     | 6                   | 83%         |
+| If/elif decision blocks   | **1**                 | 27                  | **96%**     |
+| Try/except blocks         | **0**                 | 11                  | **100%**    |
+| **Reusable code (%)**     | **73.7%**             | 40.8%               | **+32.9pp** |
+
+The framework eliminates virtually all conditional branching and defensive
+exception handling in the user's code: a single broadcast loop replaces 27
+if/elif branches and 11 try/except blocks. Version A uses only 3 distinct
+method names (`add_drone`, `broadcast_command`, `basicConfig`) while Version
+B requires 23 distinct vendor-specific calls.
 
 > See `charts/fig04_effort_metrics.png`, `fig05_effort_reduction.png`, `fig06_effort_reusability.png`.
 

@@ -77,15 +77,35 @@ CSV_OUTPUT = ROOT / "effort_comparison.csv"
 # ---------------------------------------------------------------------
 
 NATIVE_TOKEN_RE = re.compile(
-    r"\b(CoDrone|CodingRider|cr_drone|serial\.Serial|"
-    r"set_drone_LED|turn_right|turn_left|landing|"
+    r"\b("
+    # ---- vendor SDK module / class names ----
+    r"codrone_edu|CoDroneEDU|"
+    r"CodingRider|CodingRiderDrone|cr_drone|"
+    r"serial\.Serial|"
+    r"DataType|DeviceType|LightModeDrone|"
+    # ---- vendor-specific method patterns ----
+    r"sendTakeOff|sendLanding|sendStop|sendControlWhile|"
+    r"sendLightModeColor|sendRequest|setEventHandler|"
+    r"set_drone_LED|move_distance|turn_right|turn_left|landing|"
+    # ---- WIZWING protocol-specific ----
+    r"funled|"
     r"build_packet|wiz_build_packet|struct\.pack|struct\.unpack|"
     r"WIZ_[A-Z_]+|wiz_[a-z_]+|"
+    # ---- helper functions specific to Version B ----
     r"setup_codrone|setup_coding_rider|setup_wizwing|"
+    r"takeoff_all|land_all|hover_all|move_forward_all|"
+    r"turn_cw_all|get_battery_all|get_height_all|"
+    r"set_led_all|disconnect_all|"
+    # ---- vendor object variable names ----
     r"codrone_obj|rider_obj|wiz_obj|"
-    r"\.pair\(|\.set_drone_LED\(|\.turn_right\(|\.turn_left\()\b",
+    r"codrone|rider|wiz|"
+    # ---- method call patterns ----
+    r"\.pair\(|\.sendTakeOff\(|\.sendLanding\(|\.sendStop\("
+    r")\b",
 )
 HEX_LITERAL_RE = re.compile(r"\b0x[0-9A-Fa-f]+\b")
+# Bytes-string literals with carriage-return terminator are WIZWING-specific
+WIZWING_BYTE_RE = re.compile(r"b['\"][^'\"]*\\r['\"]")
 
 # Receivers that should NOT count as drone object variables
 STDLIB_RECEIVERS: Set[str] = {
@@ -267,7 +287,9 @@ def reusable_percentage(src: str) -> float:
         return 0.0
     platform_specific = sum(
         1 for ln in code_lines
-        if NATIVE_TOKEN_RE.search(ln) or HEX_LITERAL_RE.search(ln)
+        if NATIVE_TOKEN_RE.search(ln)
+        or HEX_LITERAL_RE.search(ln)
+        or WIZWING_BYTE_RE.search(ln)
     )
     return (1.0 - platform_specific / len(code_lines)) * 100.0
 

@@ -1,6 +1,6 @@
 category,metric,value
 file_analysis,files_created,1
-file_analysis,files_modified,2
+file_analysis,files_modified,0
 file_analysis,new_adapter_loc,203
 file_analysis,avg_existing_loc,190.7
 file_analysis,loc_ratio,1.06
@@ -14,17 +14,17 @@ integration,drones_managed,4
 integration,connect_ok,4/4
 integration,takeoff_ok,4/4
 integration,land_ok,4/4
-integration,simdrone_position,"(0.0, 2.5, 0.0)"
+integration,simdrone_position,"(0.0, 50.0, 0.0)"
 integration,simdrone_yaw,90.0
-integration,simdrone_battery,94
-integration,simdrone_commands_sent,8
+integration,simdrone_battery,93
+integration,simdrone_commands_sent,10
 integration,all_drones_responded,PASS
 backward_compat,three_drone_workflow,PASS
 backward_compat,originals_intact,PASS
 effort,implementation_hours,8.120
 effort,registration_seconds,0.50
-effort,test_runtime_seconds,0.044
-effort,extensible_total_hours,8.120
+effort,test_runtime_seconds,6.076
+effort,extensible_total_hours,8.122
 effort,hypothetical_total_hours,12.920
-effort,savings_hours,4.800
-effort,savings_pct,37.2
+effort,savings_hours,4.798
+effort,savings_pct,37.1
