@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend for headless environments
@@ -71,10 +71,38 @@ def read_csv(path: Path) -> List[Dict[str, str]]:
 # 1. EXTENSIBILITY: LOC per adapter
 # =====================================================================
 
+def _count_loc_for_file(path: Path) -> int:
+    """Count non-blank, non-comment lines in a Python file.
+
+    Uses the same definition as ``eval_extensibility.py`` so the chart
+    values match the CSV.
+    """
+    if not path.is_file():
+        return 0
+    n = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        n += 1
+    return n
+
+
 def chart_extensibility_loc() -> Path:
+    """Live-counted LOC per adapter (reads the actual files at chart time)."""
+    adapters_dir = ROOT / "unified_drone" / "adapters"
+    files = [
+        adapters_dir / "coding_rider.py",
+        adapters_dir / "codrone_edu.py",
+        adapters_dir / "wizwing.py",
+        adapters_dir / "simdrone_adapter.py",
+    ]
+    labels = ["coding_rider.py", "codrone_edu.py", "wizwing.py",
+              "simdrone_adapter.py\n(NEW)"]
+    locs = [_count_loc_for_file(p) for p in files]
+
     fig, ax = plt.subplots(figsize=(8, 5))
-    adapters = ["coding_rider.py", "codrone_edu.py", "wizwing.py", "simdrone_adapter.py\n(NEW)"]
-    locs = [93, 103, 145, 200]
+    adapters = labels
     colors = [COLORS["existing"]] * 3 + [COLORS["new"]]
 
     bars = ax.bar(adapters, locs, color=colors, edgecolor="black", linewidth=0.5)
@@ -97,6 +125,28 @@ def chart_extensibility_loc() -> Path:
 # =====================================================================
 
 def chart_extensibility_compliance() -> Path:
+    # Read the actual compliance numbers from the CSV (no hard-coding)
+    rows = read_csv(ROOT / "extensibility_results.csv")
+    by_metric = {r["metric"]: r["value"] for r in rows}
+
+    # Parse "N/M" patterns for the methods/drones-responded checks
+    def _split_ratio(s: str, default: Tuple[int, int]) -> Tuple[int, int]:
+        try:
+            a, b = s.split("/")
+            return int(a), int(b)
+        except Exception:
+            return default
+
+    abs_actual, abs_expected = _split_ratio(by_metric.get("abstract_implemented", "11/11"), (11, 11))
+    files_modified = int(by_metric.get("files_modified", "0"))
+    registered = int(by_metric.get("registered_count", "4"))
+    subclass_ok = 1 if by_metric.get("subclass", "PASS") == "PASS" else 0
+    factory_ok = 1 if by_metric.get("factory_correct_type", "PASS") == "PASS" else 0
+    contains_ok = 1 if by_metric.get("registry_contains_simdrone", "PASS") == "PASS" else 0
+    workflow_ok = 1 if by_metric.get("three_drone_workflow", "PASS") == "PASS" else 0
+    originals_ok = 1 if by_metric.get("originals_intact", "PASS") == "PASS" else 0
+    drones_responded, _ = _split_ratio(by_metric.get("connect_ok", "4/4"), (4, 4))
+
     fig, ax = plt.subplots(figsize=(9, 5))
     checks = [
         "Files modified",
@@ -108,8 +158,10 @@ def chart_extensibility_compliance() -> Path:
         "Original 3-drone workflow",
         "Originals intact",
     ]
-    values = [0, 1, 10, 4, 1, 4, 1, 1]      # actuals
-    targets = [0, 1, 10, 4, 1, 4, 1, 1]     # expected
+    values  = [files_modified, subclass_ok, abs_actual, registered,
+               factory_ok, drones_responded, workflow_ok, originals_ok]
+    targets = [0,              1,           abs_expected, 4,
+               1,              4,                 1,            1]
     pass_flags = [v == t for v, t in zip(values, targets)]
 
     y = np.arange(len(checks))
@@ -138,19 +190,32 @@ def chart_extensibility_compliance() -> Path:
 # 3. EXTENSIBILITY: Effort comparison
 # =====================================================================
 
+def _read_extensibility_effort() -> Tuple[float, float, float, float]:
+    """Read hours/savings from extensibility_results.csv (live, not hard-coded)."""
+    rows = read_csv(ROOT / "extensibility_results.csv")
+    by_metric = {r["metric"]: r["value"] for r in rows}
+    h_ext = float(by_metric.get("implementation_hours", "8.0"))
+    h_non = float(by_metric.get("hypothetical_total_hours", "12.8"))
+    saved = float(by_metric.get("savings_hours", "4.8"))
+    saved_pct = float(by_metric.get("savings_pct", "37.5"))
+    return h_ext, h_non, saved, saved_pct
+
+
 def chart_extensibility_effort() -> Path:
+    h_ext, h_non, saved, saved_pct = _read_extensibility_effort()
     fig, ax = plt.subplots(figsize=(7, 5))
     labels = ["Extensible\n(framework)", "Non-extensible\n(hypothetical)"]
-    hours = [8.00, 12.80]
+    hours = [h_ext, h_non]
     colors = [COLORS["framework"], COLORS["native"]]
 
     bars = ax.bar(labels, hours, color=colors, edgecolor="black", linewidth=0.5, width=0.5)
     for bar, h in zip(bars, hours):
-        ax.text(bar.get_x() + bar.get_width() / 2, h + 0.2, f"{h:.1f} h",
+        ax.text(bar.get_x() + bar.get_width() / 2, h + 0.2, f"{h:.2f} h",
                 ha="center", fontweight="bold")
 
-    ax.annotate("4.80 h saved\n(37.5%)",
-                xy=(0.5, 9.5), xytext=(0.5, 11.0),
+    ax.annotate(f"{saved:.2f} h saved\n({saved_pct:.1f}%)",
+                xy=(0.5, (h_ext + h_non) / 2),
+                xytext=(0.5, h_non * 0.87),
                 ha="center", fontsize=11, fontweight="bold",
                 color=COLORS["saved"],
                 arrowprops=dict(arrowstyle="->", color=COLORS["saved"], lw=2))
@@ -542,18 +607,19 @@ def chart_dashboard() -> Path:
     ax.set_title("Implementation type per platform")
     ax.legend(fontsize=8)
 
-    # Panel 4: Extensibility hours
+    # Panel 4: Extensibility hours (live from CSV)
+    h_ext, h_non, _, _ = _read_extensibility_effort()
     ax = axes[1, 1]
     labels = ["Extensible\n(framework)", "Non-extensible\n(hypothetical)"]
-    hours = [8.00, 12.80]
+    hours = [h_ext, h_non]
     bars = ax.bar(labels, hours, color=[COLORS["framework"], COLORS["native"]],
                   edgecolor="black", linewidth=0.4, width=0.5)
     for bar, h in zip(bars, hours):
-        ax.text(bar.get_x() + bar.get_width() / 2, h + 0.2, f"{h:.1f} h",
+        ax.text(bar.get_x() + bar.get_width() / 2, h + 0.2, f"{h:.2f} h",
                 ha="center", fontweight="bold")
     ax.set_title("Effort to add a new drone platform")
     ax.set_ylabel("developer-hours")
-    ax.set_ylim(0, 15)
+    ax.set_ylim(0, max(hours) * 1.2)
 
     fig.tight_layout()
     return save(fig, "fig00_dashboard.png")
