@@ -155,6 +155,12 @@ stays identical:
 manager.add_drone("my_drone", "wizwing", port="COM5", baudrate=115200)
 ```
 
+> **More usage patterns:** See [`docs/USAGE.md`](docs/USAGE.md) for a
+> progressive walkthrough that covers single-drone control, broadcast
+> commands across the fleet, per-drone choreography, parallel mission
+> sequences, telemetry collection, and a complete 3-drone search
+> mission worked example.
+
 ## Multi-Drone Orchestration
 
 ```python
@@ -308,6 +314,8 @@ unified-drone-framework/
 │   └── examples/
 │       └── basic_usage.py            # Multi-platform unified control demo
 │
+├── docs/
+│   └── USAGE.md                      # Practical usage guide (programmer walkthrough)
 ├── unified_drone_manual.docx         # Complete user manual (14 chapters)
 │
 ├── eval_extensibility.py             # Open/Closed Principle empirical test
@@ -551,15 +559,11 @@ logging.basicConfig(level=logging.INFO,
 
 ## Documentation
 
-A complete user manual is included as `unified_drone_manual.docx` (14 chapters)
-covering:
-
-- Architecture and design patterns
-- Detailed API reference for every class
-- Per-platform documentation with API translation tables
-- Step-by-step extension tutorial
-- Complete code examples
-- Troubleshooting guide
+| Document | What it covers |
+|---|---|
+| [`docs/USAGE.md`](docs/USAGE.md) | Practical usage walkthrough — from a one-line takeoff to a full 3-drone choreographed search mission, with code examples for every interaction pattern. |
+| [`unified_drone_manual.docx`](unified_drone_manual.docx) | Complete user manual (14 chapters): architecture, design patterns, full API reference, per-platform translation tables, extension tutorial, troubleshooting. |
+| This README | High-level overview, installation, evaluation results, and contribution guidelines. |
 
 ## Examples
 
