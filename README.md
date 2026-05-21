@@ -423,14 +423,14 @@ conclusion robust to criticism of the LOC/h figure.
 
 | Adapter file       | LOC |
 |--------------------|-----|
-| `coding_rider.py`  | 93  |
-| `codrone_edu.py`   | 103 |
-| `wizwing.py`       | 145 |
-| `simdrone_adapter.py` (NEW) | 200 |
-| **Average existing** | 114 |
+| `codrone_edu.py`   | 159 |
+| `coding_rider.py`  | 202 |
+| `wizwing.py`       | 211 |
+| `simdrone_adapter.py` (NEW) | 203 |
+| **Average existing** | 190.7 |
 
-The new adapter is in the same order of magnitude as the originals, indicating
-predictable, consistent extension cost.
+The new adapter (1.06× the average) is in the same order of magnitude as the
+originals, indicating predictable, consistent extension cost.
 
 > See `charts/fig01_extensibility_loc.png`, `fig02_extensibility_compliance.png`, `fig03_extensibility_effort.png`.
 
