@@ -481,6 +481,24 @@ def chart_interop_timing() -> Path:
 # =====================================================================
 
 def chart_interop_matrix() -> Path:
+    """Per-command verdict matrix.
+
+    Visual semantics (combines ``result`` and ``implementation`` columns):
+      * GREEN (PASS via NATIVE):
+            command executed without exception and the adapter used a
+            direct primitive of the underlying SDK.
+      * YELLOW (PASS via COMPENSATION):
+            command executed without exception but the adapter had to do
+            non-trivial work to bridge a heterogeneity (async->sync,
+            missing primitive, or capability gap). Shown as a partial
+            success because the user's intent was satisfied through
+            framework-mediated translation rather than a direct call.
+      * YELLOW (PARTIAL):
+            command executed but returned a sentinel value (-1 / -1.0)
+            because the telemetry was unavailable.
+      * GREY  (SKIP / FRAMEWORK_LIMIT)
+      * RED   (FAIL)
+    """
     rows = read_csv(ROOT / "interoperability_results.csv")
     platforms = sorted({r["platform"] for r in rows})
     commands_seen: List[str] = []
@@ -488,13 +506,35 @@ def chart_interop_matrix() -> Path:
         if r["command"] not in commands_seen:
             commands_seen.append(r["command"])
 
-    code_map = {"PASS": 3, "PARTIAL": 2, "FAIL": 0, "FRAMEWORK_LIMIT": 1}
-    label_map = {3: "PASS", 2: "PART", 1: "SKIP", 0: "FAIL"}
+    # Cell encoding:
+    #   3 = PASS (NATIVE)         -- direct call to SDK primitive
+    #   2 = PASS via COMPENSATION -- adapter did extra work; user got a result
+    #   2 = PARTIAL               -- returned sentinel value
+    #   1 = SKIP / FRAMEWORK_LIMIT
+    #   0 = FAIL
     matrix = np.zeros((len(platforms), len(commands_seen)))
+    labels = np.empty((len(platforms), len(commands_seen)), dtype=object)
     for r in rows:
         i = platforms.index(r["platform"])
         j = commands_seen.index(r["command"])
-        matrix[i, j] = code_map.get(r["result"], 0)
+        verdict = r["result"]
+        impl = r.get("implementation", "")
+        if verdict == "FAIL":
+            matrix[i, j] = 0
+            labels[i, j] = "FAIL"
+        elif verdict == "FRAMEWORK_LIMIT":
+            matrix[i, j] = 1
+            labels[i, j] = "SKIP"
+        elif verdict == "PARTIAL":
+            matrix[i, j] = 2
+            labels[i, j] = "PART"
+        elif verdict == "PASS" and impl == "COMPENSATORY":
+            # PASS but the adapter compensated -- visualised as partial
+            matrix[i, j] = 2
+            labels[i, j] = "COMP"
+        else:
+            matrix[i, j] = 3
+            labels[i, j] = "PASS"
 
     cmap = matplotlib.colors.ListedColormap([
         COLORS["fail"], COLORS["skip"], COLORS["partial"], COLORS["pass"]
@@ -510,20 +550,20 @@ def chart_interop_matrix() -> Path:
 
     for i in range(len(platforms)):
         for j in range(len(commands_seen)):
-            ax.text(j, i, label_map[int(matrix[i, j])],
+            ax.text(j, i, labels[i, j],
                     ha="center", va="center",
                     color="white", fontweight="bold", fontsize=9)
 
     # Custom legend
     legend_handles = [
-        plt.Rectangle((0, 0), 1, 1, color=COLORS["pass"], label="PASS"),
-        plt.Rectangle((0, 0), 1, 1, color=COLORS["partial"], label="PARTIAL"),
-        plt.Rectangle((0, 0), 1, 1, color=COLORS["skip"], label="SKIP (not in interface)"),
-        plt.Rectangle((0, 0), 1, 1, color=COLORS["fail"], label="FAIL"),
+        plt.Rectangle((0, 0), 1, 1, color=COLORS["pass"],    label="PASS (native)"),
+        plt.Rectangle((0, 0), 1, 1, color=COLORS["partial"], label="COMP / PARTIAL (compensatory or sentinel)"),
+        plt.Rectangle((0, 0), 1, 1, color=COLORS["skip"],    label="SKIP (not in interface)"),
+        plt.Rectangle((0, 0), 1, 1, color=COLORS["fail"],    label="FAIL"),
     ]
     ax.legend(handles=legend_handles, loc="upper left",
               bbox_to_anchor=(1.0, 1.0), framealpha=1)
-    ax.set_title("Per-command verdict matrix")
+    ax.set_title("Per-command verdict matrix (compensatory cells in yellow)")
     ax.grid(False)
     return save(fig, "fig10_interop_matrix.png")
 
