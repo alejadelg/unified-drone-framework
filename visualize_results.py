@@ -190,39 +190,60 @@ def chart_extensibility_compliance() -> Path:
 # 3. EXTENSIBILITY: Effort comparison
 # =====================================================================
 
-def _read_extensibility_effort() -> Tuple[float, float, float, float]:
-    """Read hours/savings from extensibility_results.csv (live, not hard-coded)."""
+def _read_extensibility_effort() -> Dict[str, float]:
+    """Read hours/savings from extensibility_results.csv (live, not hard-coded).
+
+    Returns midpoint values plus the low/high bounds driven by the
+    productivity range encoded in eval_extensibility.py.
+    """
     rows = read_csv(ROOT / "extensibility_results.csv")
     by_metric = {r["metric"]: r["value"] for r in rows}
-    h_ext = float(by_metric.get("implementation_hours", "8.0"))
-    h_non = float(by_metric.get("hypothetical_total_hours", "12.8"))
-    saved = float(by_metric.get("savings_hours", "4.8"))
-    saved_pct = float(by_metric.get("savings_pct", "37.5"))
-    return h_ext, h_non, saved, saved_pct
+    def f(key: str, default: str) -> float:
+        return float(by_metric.get(key, default))
+    return {
+        "ext":       f("extensible_total_hours",        "8.12"),
+        "ext_low":   f("extensible_total_hours_low",    "5.72"),
+        "ext_high":  f("extensible_total_hours_high",   "13.33"),
+        "non":       f("hypothetical_total_hours",      "12.80"),
+        "non_low":   f("hypothetical_total_hours_low",  "9.14"),
+        "non_high":  f("hypothetical_total_hours_high", "21.33"),
+        "saved":     f("savings_hours",                 "4.80"),
+        "saved_pct": f("savings_pct",                   "37.5"),
+        "rate_low":  f("rate_low_loc_per_hour",         "15"),
+        "rate_high": f("rate_high_loc_per_hour",        "35"),
+    }
 
 
 def chart_extensibility_effort() -> Path:
-    h_ext, h_non, saved, saved_pct = _read_extensibility_effort()
+    e = _read_extensibility_effort()
     fig, ax = plt.subplots(figsize=(7, 5))
     labels = ["Extensible\n(framework)", "Non-extensible\n(hypothetical)"]
-    hours = [h_ext, h_non]
+    hours = [e["ext"], e["non"]]
+    err_low  = [e["ext"] - e["ext_low"],  e["non"] - e["non_low"]]
+    err_high = [e["ext_high"] - e["ext"], e["non_high"] - e["non"]]
     colors = [COLORS["framework"], COLORS["native"]]
 
-    bars = ax.bar(labels, hours, color=colors, edgecolor="black", linewidth=0.5, width=0.5)
+    bars = ax.bar(labels, hours, color=colors, edgecolor="black", linewidth=0.5,
+                  width=0.5, yerr=[err_low, err_high],
+                  capsize=8, ecolor="black",
+                  error_kw={"linewidth": 1.5, "alpha": 0.75})
     for bar, h in zip(bars, hours):
         ax.text(bar.get_x() + bar.get_width() / 2, h + 0.2, f"{h:.2f} h",
                 ha="center", fontweight="bold")
 
-    ax.annotate(f"{saved:.2f} h saved\n({saved_pct:.1f}%)",
-                xy=(0.5, (h_ext + h_non) / 2),
-                xytext=(0.5, h_non * 0.87),
+    ax.annotate(f"{e['saved']:.2f} h saved\n({e['saved_pct']:.1f}%)",
+                xy=(0.5, (hours[0] + hours[1]) / 2),
+                xytext=(0.5, hours[1] * 0.87),
                 ha="center", fontsize=11, fontweight="bold",
                 color=COLORS["saved"],
                 arrowprops=dict(arrowstyle="->", color=COLORS["saved"], lw=2))
 
     ax.set_ylabel("Developer-hours")
-    ax.set_title("Effort to add a new drone platform")
-    ax.set_ylim(0, max(hours) * 1.25)
+    ax.set_title(
+        "Effort to add a new drone platform\n"
+        f"(error bars: {int(e['rate_low'])}-{int(e['rate_high'])} LOC/h productivity range)"
+    )
+    ax.set_ylim(0, max(e["ext_high"], e["non_high"]) * 1.15)
     return save(fig, "fig03_extensibility_effort.png")
 
 
@@ -648,18 +669,22 @@ def chart_dashboard() -> Path:
     ax.legend(fontsize=8)
 
     # Panel 4: Extensibility hours (live from CSV)
-    h_ext, h_non, _, _ = _read_extensibility_effort()
+    e = _read_extensibility_effort()
     ax = axes[1, 1]
     labels = ["Extensible\n(framework)", "Non-extensible\n(hypothetical)"]
-    hours = [h_ext, h_non]
+    hours = [e["ext"], e["non"]]
+    err_low  = [e["ext"] - e["ext_low"],  e["non"] - e["non_low"]]
+    err_high = [e["ext_high"] - e["ext"], e["non_high"] - e["non"]]
     bars = ax.bar(labels, hours, color=[COLORS["framework"], COLORS["native"]],
-                  edgecolor="black", linewidth=0.4, width=0.5)
+                  edgecolor="black", linewidth=0.4, width=0.5,
+                  yerr=[err_low, err_high], capsize=6, ecolor="black",
+                  error_kw={"linewidth": 1.0, "alpha": 0.75})
     for bar, h in zip(bars, hours):
         ax.text(bar.get_x() + bar.get_width() / 2, h + 0.2, f"{h:.2f} h",
                 ha="center", fontweight="bold")
     ax.set_title("Effort to add a new drone platform")
     ax.set_ylabel("developer-hours")
-    ax.set_ylim(0, max(hours) * 1.2)
+    ax.set_ylim(0, max(e["ext_high"], e["non_high"]) * 1.15)
 
     fig.tight_layout()
     return save(fig, "fig00_dashboard.png")

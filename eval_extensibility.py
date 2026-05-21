@@ -74,9 +74,16 @@ EXISTING_ADAPTER_FILES = [
 ]
 CSV_OUTPUT = ROOT / "extensibility_results.csv"
 
-# Industry baseline: net (debugged) Python LOC produced per developer-hour.
-# Conservative figure used to convert LOC into rough effort estimates.
-LOC_PER_HOUR_DEVELOPER = 25
+# Industry baseline range for net (debugged) Python LOC per developer-hour.
+# Source: McConnell, "Code Complete" (2nd ed., 2004), §27.3 reports ~10-50
+# LOC/h for small/medium projects; Boehm's COCOMO (1981, 2000) reports a
+# similar coding-phase band. Individual-developer productivity varies by an
+# order of magnitude (Sackman, Erikson & Grant, 1968), so we report effort
+# as an interval, not a point. 15-35 covers the small/medium-project band;
+# the midpoint (25) is used for the point estimate retained in summaries.
+LOC_PER_HOUR_LOW = 15
+LOC_PER_HOUR_MID = 25
+LOC_PER_HOUR_HIGH = 35
 
 
 # ---------------------------------------------------------------------
@@ -314,33 +321,69 @@ def backward_compat_test() -> Dict[str, Any]:
 def effort_estimate(new_loc: int, eval_seconds: float) -> Dict[str, Any]:
     """Compare effort vs. a hypothetical non-extensible framework.
 
+    Effort is reported as an interval [low, high] driven by the productivity
+    range LOC_PER_HOUR_LOW..LOC_PER_HOUR_HIGH (see module-level note for
+    sources). The midpoint provides a point estimate for tables. Note that
+    the *percentage* of savings is essentially invariant under the rate —
+    only absolute hours scale with productivity — which strengthens the
+    conclusion against criticism of the LOC/h figure.
+
     Hypothetical baseline: a tightly-coupled framework would also require
     editing manager dispatch, central registry list, and at least one
     enum/registration block in every existing adapter (~30 LOC each).
     """
-    impl_hours = new_loc / LOC_PER_HOUR_DEVELOPER
     register_seconds = 0.5  # one decorator line
     test_seconds = eval_seconds
+    overhead_hours = (register_seconds + test_seconds) / 3600
 
     hypothetical_extra_loc = 30 * 4  # 4 existing files would need edits
     hypothetical_total_loc = new_loc + hypothetical_extra_loc
-    hypothetical_hours = hypothetical_total_loc / LOC_PER_HOUR_DEVELOPER
 
-    extensible_total_h = (
-        impl_hours + register_seconds / 3600 + test_seconds / 3600
-    )
+    # Point estimates (midpoint rate). Hypothetical never runs the test
+    # harness, so its only cost is implementation LOC.
+    impl_hours = new_loc / LOC_PER_HOUR_MID
+    extensible_total_h = impl_hours + overhead_hours
+    hypothetical_hours = hypothetical_total_loc / LOC_PER_HOUR_MID
     saved_h = hypothetical_hours - extensible_total_h
     saved_pct = (1.0 - extensible_total_h / hypothetical_hours) * 100.0
 
+    # Interval bounds (note inversion: high rate -> low hours).
+    impl_hours_low  = new_loc / LOC_PER_HOUR_HIGH
+    impl_hours_high = new_loc / LOC_PER_HOUR_LOW
+    extensible_low  = impl_hours_low  + overhead_hours
+    extensible_high = impl_hours_high + overhead_hours
+    hypothetical_low  = hypothetical_total_loc / LOC_PER_HOUR_HIGH
+    hypothetical_high = hypothetical_total_loc / LOC_PER_HOUR_LOW
+    # Pair each rate's (ext, hyp) for a coherent saved-hours bound.
+    saved_at_high_rate = hypothetical_low  - extensible_low   # smallest delta
+    saved_at_low_rate  = hypothetical_high - extensible_high  # largest delta
+    saved_h_low  = min(saved_at_high_rate, saved_at_low_rate)
+    saved_h_high = max(saved_at_high_rate, saved_at_low_rate)
+    saved_pct_low  = (1.0 - extensible_high / hypothetical_high) * 100.0
+    saved_pct_high = (1.0 - extensible_low  / hypothetical_low)  * 100.0
+
     return {
-        "implementation_hours": impl_hours,
-        "registration_seconds": register_seconds,
-        "test_runtime_seconds": test_seconds,
-        "extensible_total_hours": extensible_total_h,
-        "hypothetical_total_hours": hypothetical_hours,
-        "savings_hours": saved_h,
-        "savings_pct": saved_pct,
-        "hypothetical_extra_loc": hypothetical_extra_loc,
+        "implementation_hours":          impl_hours,
+        "implementation_hours_low":      impl_hours_low,
+        "implementation_hours_high":     impl_hours_high,
+        "registration_seconds":          register_seconds,
+        "test_runtime_seconds":          test_seconds,
+        "extensible_total_hours":        extensible_total_h,
+        "extensible_total_hours_low":    extensible_low,
+        "extensible_total_hours_high":   extensible_high,
+        "hypothetical_total_hours":      hypothetical_hours,
+        "hypothetical_total_hours_low":  hypothetical_low,
+        "hypothetical_total_hours_high": hypothetical_high,
+        "savings_hours":                 saved_h,
+        "savings_hours_low":             saved_h_low,
+        "savings_hours_high":            saved_h_high,
+        "savings_pct":                   saved_pct,
+        "savings_pct_low":               saved_pct_low,
+        "savings_pct_high":              saved_pct_high,
+        "hypothetical_extra_loc":        hypothetical_extra_loc,
+        "rate_low":                      LOC_PER_HOUR_LOW,
+        "rate_mid":                      LOC_PER_HOUR_MID,
+        "rate_high":                     LOC_PER_HOUR_HIGH,
     }
 
 
@@ -414,24 +457,39 @@ def print_report(
 
     print(banner("EFFORT TIMELINE (BONUS)"))
     print(
+        f" Productivity range:          "
+        f"{LOC_PER_HOUR_LOW}-{LOC_PER_HOUR_HIGH} LOC/h "
+        f"(midpoint {LOC_PER_HOUR_MID} LOC/h)"
+    )
+    print(
         f" Implementation:              "
         f"{eff['implementation_hours']:.2f} h "
-        f"({fa['new_adapter_loc']} LOC @ {LOC_PER_HOUR_DEVELOPER} LOC/h)"
+        f"(range {eff['implementation_hours_low']:.2f}-{eff['implementation_hours_high']:.2f} h, "
+        f"{fa['new_adapter_loc']} LOC)"
     )
     print(f" Registration overhead:       {eff['registration_seconds']:.2f} seconds (one decorator)")
     print(f" Test runtime:                {eff['test_runtime_seconds']:.3f} seconds")
-    print(f" Total (extensible):          {eff['extensible_total_hours']:.2f} h")
+    print(
+        f" Total (extensible):          "
+        f"{eff['extensible_total_hours']:.2f} h "
+        f"(range {eff['extensible_total_hours_low']:.2f}-{eff['extensible_total_hours_high']:.2f} h)"
+    )
     print(
         f" Total (non-extensible*):     "
         f"{eff['hypothetical_total_hours']:.2f} h "
-        f"(+{eff['hypothetical_extra_loc']} LOC across 4 existing files)"
+        f"(range {eff['hypothetical_total_hours_low']:.2f}-{eff['hypothetical_total_hours_high']:.2f} h, "
+        f"+{eff['hypothetical_extra_loc']} LOC across 4 existing files)"
     )
     print(
         f" Time saved:                  "
-        f"{eff['savings_hours']:.2f} h ({eff['savings_pct']:.1f}%)"
+        f"{eff['savings_hours']:.2f} h ({eff['savings_pct']:.1f}%) "
+        f"[range {eff['savings_hours_low']:.2f}-{eff['savings_hours_high']:.2f} h, "
+        f"{eff['savings_pct_low']:.1f}-{eff['savings_pct_high']:.1f}%]"
     )
     print(" * Hypothetical baseline assumes a tightly-coupled framework where")
     print("   adding a drone requires touching manager + registry + every adapter.")
+    print(" * Productivity range from McConnell, Code Complete (2nd ed., 2004), ch. 27.3.")
+    print("   The savings percentage is robust under the rate; only absolute hours scale.")
 
 
 def write_csv(
@@ -473,13 +531,26 @@ def write_csv(
         ),
         ("backward_compat", "three_drone_workflow", bc["three_drone_workflow"]),
         ("backward_compat", "originals_intact", bc["originals_intact"]),
+        ("effort", "rate_low_loc_per_hour", str(eff["rate_low"])),
+        ("effort", "rate_mid_loc_per_hour", str(eff["rate_mid"])),
+        ("effort", "rate_high_loc_per_hour", str(eff["rate_high"])),
         ("effort", "implementation_hours", f"{eff['implementation_hours']:.3f}"),
+        ("effort", "implementation_hours_low", f"{eff['implementation_hours_low']:.3f}"),
+        ("effort", "implementation_hours_high", f"{eff['implementation_hours_high']:.3f}"),
         ("effort", "registration_seconds", f"{eff['registration_seconds']:.2f}"),
         ("effort", "test_runtime_seconds", f"{eff['test_runtime_seconds']:.3f}"),
         ("effort", "extensible_total_hours", f"{eff['extensible_total_hours']:.3f}"),
+        ("effort", "extensible_total_hours_low", f"{eff['extensible_total_hours_low']:.3f}"),
+        ("effort", "extensible_total_hours_high", f"{eff['extensible_total_hours_high']:.3f}"),
         ("effort", "hypothetical_total_hours", f"{eff['hypothetical_total_hours']:.3f}"),
+        ("effort", "hypothetical_total_hours_low", f"{eff['hypothetical_total_hours_low']:.3f}"),
+        ("effort", "hypothetical_total_hours_high", f"{eff['hypothetical_total_hours_high']:.3f}"),
         ("effort", "savings_hours", f"{eff['savings_hours']:.3f}"),
+        ("effort", "savings_hours_low", f"{eff['savings_hours_low']:.3f}"),
+        ("effort", "savings_hours_high", f"{eff['savings_hours_high']:.3f}"),
         ("effort", "savings_pct", f"{eff['savings_pct']:.1f}"),
+        ("effort", "savings_pct_low", f"{eff['savings_pct_low']:.1f}"),
+        ("effort", "savings_pct_high", f"{eff['savings_pct_high']:.1f}"),
     ]
     with CSV_OUTPUT.open("w", newline="", encoding="utf-8") as f:
         csv.writer(f).writerows(rows)

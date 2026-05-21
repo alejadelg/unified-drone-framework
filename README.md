@@ -406,13 +406,18 @@ All evaluation scripts are reproducible and produce CSV outputs
 | Original 3-drone workflow still works | PASS |
 | Originals intact (no regression) | PASS |
 
-**Effort estimate:**
+**Effort estimate** (productivity range 15–35 LOC/h, midpoint 25 LOC/h;
+McConnell, _Code Complete_ 2nd ed., ch. 27.3):
 
-| Approach | Hours | LOC added |
-|----------|-------|-----------|
-| Extensible (this framework) | **8.0 h** | 200 LOC in one new file |
-| Non-extensible (hypothetical) | 12.8 h | 200 + 120 LOC across 5 files |
-| **Time saved** | **4.8 h (37.5%)** | — |
+| Approach | Hours (midpoint) | Range | LOC added |
+|----------|------------------|-------|-----------|
+| Extensible (this framework) | **8.12 h** | 5.80–13.54 h | 203 LOC in one new file |
+| Non-extensible (hypothetical) | 12.92 h | 9.23–21.53 h | 203 + 120 LOC across 5 files |
+| **Time saved** | **4.80 h (37.1%)** | 3.43–8.00 h | — |
+
+The savings **percentage is invariant under the productivity rate** (37.1% at
+every point in the range); only the absolute hours scale. This makes the
+conclusion robust to criticism of the LOC/h figure.
 
 **Adapter size comparison** (LOC, logic only):
 
