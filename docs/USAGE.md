@@ -39,6 +39,13 @@ import unified_drone.adapters   # registers the 3 built-in adapters
 manager = DroneManager()
 ```
 
+> **Testing without hardware?** The repository ships a 4th reference
+> adapter — `simdrone_adapter.py` — that simulates a Wi-Fi drone
+> entirely in-process. Register it with
+> `from unified_drone.adapters.simdrone_adapter import MockDroneAdapter`
+> followed by `manager.add_drone("sim_1", "simdrone")`. Every example
+> below works against it with no hardware attached.
+
 ## Step 1 — One drone, one command ("hello world")
 
 ```python
@@ -350,6 +357,9 @@ The programmer uses only **four manager methods** and a set of
 | `manager.send_command(id, cmd)` | Send one command to one specific drone |
 | `manager.broadcast_command(cmd)` | Send one command to ALL registered drones |
 | `manager.send_sequence(id, [cmds])` | Send N commands in order to one drone |
+| `manager.drone_ids` | Property: list of registered drone IDs |
+| `manager.status_report()` | Snapshot dict of every drone's current status |
+| `manager.remove_drone(id)` | Unregister a drone (disconnects first if needed) |
 
 ### DroneCommand factories
 
